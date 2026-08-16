@@ -67,13 +67,13 @@ function pollProgress(span) {
   if (t == null) return;
   const stage = stageOf(newest);
   const stageIdx = ORDER.indexOf(stage);
-  const stagePct = span > 0 ? Math.min(100, (t / span) * 100) : 0;
-  // coarse but monotonic: stages advance, never go backwards
-  if (stageIdx < best.stageIdx) return;
-  const pct = Math.max(best.pct, Math.min(99, (ORDER.indexOf(stage) >= 0 ? stageIdx : 0) * 0 + stagePct));
+  if (stageIdx >= 0 && stageIdx < best.stageIdx) return;   // stages only move forward
+  // % is within the current stage: each ffmpeg pass walks the same 0→span timeline
+  const pct = span > 0 ? Math.min(100, Math.round((t / span) * 100)) : 0;
+  if (stage === best.stage && pct === best.pct) return;    // nothing new to say
   best = { pct, stage, stageIdx };
   lastActivity = Date.now(); warned = false;
-  post({ type: 'progress', stage, pct: Math.round(stagePct), t, span });
+  post({ type: 'progress', stage, pct, t, span });
 }
 
 function start(j) {

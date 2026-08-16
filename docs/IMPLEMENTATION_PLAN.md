@@ -24,20 +24,32 @@ later phases can run in parallel (noted). Estimates assume 1–2 devs and are ro
 
 ---
 
-## Phase 0 — Electron shell & migration (foundation)
+## Phase 0 — Electron shell & migration (foundation) — ✅ **DONE (2026-08-16, macOS arm64)**
 **Goal:** the current app running as a real Electron window, cross-platform, secure, ffmpeg off-main.
 **Tasks:**
-- Scaffold Electron (electron-builder). Move the Express handlers into **main-process IPC** (project
+- [x] Scaffold Electron (electron-builder). Move the Express handlers into **main-process IPC** (project
   get/save, video serve → local file, render, audio-gen). Keep the render engine as-is (Python) for now.
-- Run ffmpeg/render in a **`utilityProcess`**; stream `-progress` to the renderer over a MessagePort.
-- Port the terminal: `@xterm/xterm` v6 + `node-pty` (**`@electron/rebuild`** + **`asarUnpack`**), add
+- [x] Run ffmpeg/render in a **`utilityProcess`**; stream progress to the renderer over a MessagePort.
+- [x] Port the terminal: `@xterm/xterm` v6 + `node-pty` (**`@electron/rebuild`** + **`asarUnpack`**), add
   **`fix-path`** + login-shell spawn so `claude` resolves in a packaged app.
-- Security pass: contextIsolation + sandbox + nodeIntegration:false + narrow contextBridge + CSP.
-- Move the existing UI (`public/`) into the renderer; wire IPC in place of `fetch`.
-**Deliverable:** `npm run dev` opens the editor as an Electron app on mac + Windows; timeline, preview,
-terminal, render all work via IPC.
-**Acceptance:** load the grants `project.json`, render a range preview, run `claude` in the terminal —
-all inside Electron, no external server. **Depends on:** nothing.
+- [x] Security pass: contextIsolation + sandbox + nodeIntegration:false + narrow contextBridge + CSP.
+- [x] Move the existing UI (`public/` → `renderer/`); wire IPC in place of `fetch`/SSE/WebSocket.
+**Deliverable:** `npm run dev` opens the editor as an Electron app; timeline, preview, terminal, render all
+work via IPC. **Windows is untested** (no Windows machine this session) — see the report.
+**Acceptance:** ✅ load the grants `project.json` (1728 cues / 12 scenes), ✅ render a range preview
+(195–203s in 11s, progress over the MessagePort, plays back in-app), ✅ run `claude` in the terminal — all
+inside Electron, no external server. Verified by `npm run smoke` (`electron/smoke.mjs`). **Depends on:** nothing.
+
+**Deviations / decisions (2026-08-16)**
+- Local media is served by a **privileged `cve://` scheme** with real HTTP-Range support (Chromium seeking
+  needs 206s; `file://` doesn't give them) and a workspace-scoped path allowlist — this replaces `/api/video`.
+- Progress: the Python engine writes each ffmpeg pass to its own log file, so `-progress` on stdout isn't
+  available. The worker **tails the newest tmp log** for `time=` and reports `{stage, pct}` instead. When
+  Phase 4 ports the engine to Node this becomes a direct `-progress pipe:` stream.
+- Added a **render watchdog** in the worker (stall event at 90s of silence, kill at 20min, hard timeout 4h)
+  and a **Cancel** button that kills the whole process tree (python + ffmpeg children).
+- Project reload is now an `fs.watch` push from main (the 4s poll is gone); the anti-clobber guard stays.
+- Added `electron/smoke.mjs` — an in-app automated test (the Chrome extension can't reach an Electron app).
 
 ## Phase 1 — Distribution pipeline (do EARLY, parallel with Phase 2)
 **Goal:** signed, notarized, auto-updating installers on both OSes.
