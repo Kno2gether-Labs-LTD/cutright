@@ -2,7 +2,7 @@
   "name": "claude-video-editor",
   "productName": "Claude Video Editor",
   "version": "0.1.0",
-  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) → editable timeline → deterministic render.",
+  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) \u2192 editable timeline \u2192 deterministic render.",
   "type": "module",
   "main": "electron/main.js",
   "author": "Avijit Sarkar",
@@ -24,6 +24,7 @@
     "node-pty": "1.1.0"
   },
   "devDependencies": {
+    "@electron/notarize": "3.1.0",
     "@electron/rebuild": "4.2.0",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
@@ -32,7 +33,10 @@
   "build": {
     "appId": "com.avijitsarkar.claudevideoeditor",
     "productName": "Claude Video Editor",
-    "directories": { "output": "dist", "buildResources": "build" },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "electron/**/*",
       "renderer/**/*",
@@ -46,17 +50,39 @@
     ],
     "mac": {
       "category": "public.app-category.video",
-      "target": [{ "target": "dmg", "arch": ["arm64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
       "darkModeSupport": true,
       "identity": null,
       "hardenedRuntime": false,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.icns"
     },
-    "dmg": { "title": "Claude Video Editor ${version}" },
+    "dmg": {
+      "title": "Claude Video Editor ${version}"
+    },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
     },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "afterSign": "build/notarize.cjs"
   }
 }
