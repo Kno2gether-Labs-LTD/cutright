@@ -12,6 +12,9 @@ later phases can run in parallel (noted). Estimates assume 1–2 devs and are ro
 ---
 
 ## ⏱ Start IMMEDIATELY (long-lead, gate the launch — do in parallel with Phase 0)
+> **Status 2026-08-16:** all four are still **owner-blocked** (money/accounts/build). Nothing in the code
+> depends on them yet — dev uses the system ffmpeg and an unsigned build — but they gate the first
+> distributable release. Details + exactly what to do: `PHASE0_REPORT.md` §5.
 1. **LGPL ffmpeg build.** Produce/obtain a custom **LGPL** FFmpeg (no `--enable-gpl`, no x264/x265) with
    hardware encoders (`videotoolbox` mac; `nvenc`+QSV/`libvpl` Windows) for both arches. **Blocks any
    commercial release** — stock ffmpeg-static is GPL. (Owner task; ~days.)
@@ -51,15 +54,22 @@ inside Electron, no external server. Verified by `npm run smoke` (`electron/smok
 - Project reload is now an `fs.watch` push from main (the 4s poll is gone); the anti-clobber guard stays.
 - Added `electron/smoke.mjs` — an in-app automated test (the Chrome extension can't reach an Electron app).
 
-## Phase 1 — Distribution pipeline (do EARLY, parallel with Phase 2)
+## Phase 1 — Distribution pipeline (do EARLY, parallel with Phase 2) — 🟡 started
 **Goal:** signed, notarized, auto-updating installers on both OSes.
 **Tasks:**
-- electron-builder targets: `.dmg`, NSIS `.exe`. Bundle the **LGPL ffmpeg** via `asarUnpack`/`extraResources`
-  (per-arch glob); resolve packaged paths.
-- macOS: Developer ID sign + **notarytool** (`@electron/notarize`) + hardened runtime + staple; entitlements
-  (`allow-jit`, `disable-library-validation`); **sign the ffmpeg sidecar**.
-- Windows: sign via Azure Trusted Signing (or OV token) in CI.
-- **electron-updater** → private S3/Spaces; wire update-check + download + install-on-quit UI.
+- [x] electron-builder targets configured: `.dmg` (mac arm64) + NSIS `.exe` (win x64), app icon,
+  `asarUnpack` for node-pty. **An unsigned arm64 dmg builds and launches** (verified from the mounted
+  volume with a bare PATH). *Still to do: mac x64/universal, and a Windows build on real hardware.*
+- [ ] Bundle the **LGPL ffmpeg** via `asarUnpack`/`extraResources` (per-arch glob); resolve packaged paths.
+      *Blocked on the LGPL build (long-lead #1); dev currently uses the system ffmpeg.*
+- [x] macOS notarization **pre-wired**: `build/entitlements.mac.plist` (allow-jit,
+  disable-library-validation) + `build/notarize.cjs` afterSign hook that no-ops until `APPLE_ID` /
+  `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` exist.
+- [ ] Developer ID sign + notarytool + hardened runtime + staple; **sign the ffmpeg sidecar**.
+      *Blocked on the Apple Developer account (long-lead #2).*
+- [ ] Windows: sign via Azure Trusted Signing (or OV token) in CI. *Blocked on eligibility (long-lead #3).*
+- [ ] **electron-updater** → private S3/Spaces; wire update-check + download + install-on-quit UI.
+      *Blocked on the release-host decision (long-lead #4).*
 **Deliverable:** downloadable signed installers that auto-update.
 **Acceptance:** fresh install on a clean mac + Windows launches without Gatekeeper/SmartScreen blocks
 (mac) / with expected reputation ramp (Windows); a bumped version auto-updates. **Depends on:** Phase 0 +

@@ -2,7 +2,7 @@
   "name": "claude-video-editor",
   "productName": "Claude Video Editor",
   "version": "0.1.0",
-  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) \u2192 editable timeline \u2192 deterministic render.",
+  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) → editable timeline → deterministic render.",
   "type": "module",
   "main": "electron/main.js",
   "author": "Avijit Sarkar",
@@ -27,8 +27,7 @@
     "@electron/notarize": "3.1.0",
     "@electron/rebuild": "4.2.0",
     "electron": "43.4.0",
-    "electron-builder": "26.15.3",
-    "puppeteer-core": "^22.15.0"
+    "electron-builder": "26.15.3"
   },
   "build": {
     "appId": "com.avijitsarkar.claudevideoeditor",

@@ -110,7 +110,8 @@ function createWindow() {
     return { action: 'deny' };
   });
   if (isDev && process.env.CVE_DEVTOOLS) win.webContents.openDevTools({ mode: 'detach' });
-  win.on('closed', () => { win = null; });
+  const wcId = win.webContents.id;                       // gone by the time 'closed' fires
+  win.on('closed', () => { killTerm(wcId); win = null; });
   return win;
 }
 

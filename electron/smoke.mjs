@@ -5,7 +5,8 @@
 //   CVE_SMOKE=ui,render,term CVE_SMOKE_OUT=/tmp/smoke npm run dev
 //
 // Writes <out>.json (assertions) + <out>.png (screenshot) and exits with code 0/1.
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // strip ANSI/OSC so we can assert on terminal text
@@ -14,6 +15,7 @@ const strip = (t) => String(t).replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
 export async function run({ win, app, settings }) {
   const want = String(process.env.CVE_SMOKE).split(',').map((s) => s.trim());
   const out = process.env.CVE_SMOKE_OUT || '/tmp/cve-smoke';
+  try { mkdirSync(dirname(out), { recursive: true }); } catch {}
   const report = { started: new Date().toISOString(), workspace: settings.work, checks: {} };
   const check = (k, v) => { report.checks[k] = v; console.log(`[smoke] ${k}:`, JSON.stringify(v)); };
 

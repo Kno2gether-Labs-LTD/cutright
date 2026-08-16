@@ -14,3 +14,6 @@ reference for the handlers that became main-process IPC in Phase 0:
 
 It no longer runs: `express` and `ws` were dropped from `package.json`, and `renderer/app.js` now talks to
 `window.editor` instead of `fetch`. Delete this folder once Phase 1 is signed off.
+
+`tests/` are the old puppeteer-against-localhost UI tests. They target the retired web server and no
+longer run; the Electron equivalent is `electron/smoke.mjs` (`npm run smoke`).
