@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Phase 1 (signing/notarization) turns hardenedRuntime on and uses these.
+     allow-jit: V8. disable-library-validation: lets a separately-signed ffmpeg
+     sidecar + the node-pty native module load. allow-unsigned-executable-memory
+     and inherit are needed by Electron's helper processes. -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
+  <key>com.apple.security.inherit</key><true/>
+</dict>
+</plist>

@@ -1,18 +1,25 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<!-- Strict CSP: no remote code, no inline scripts, no eval. Local media only via the
+     privileged cve:// scheme. 'unsafe-inline' for styles is xterm's injected <style>. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cve:; media-src cve: blob:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Video Editor</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <div class="brand">◆ Claude Video Editor <span id="work" class="muted"></span></div>
+  <div class="brand">◆ Claude Video Editor <span id="work" class="muted"></span>
+    <button id="btnWorkspace" class="ghost" title="Open a different workspace folder">change…</button></div>
   <div class="actions">
     <span id="status" class="muted"></span>
     <button id="btnPreview">▶ Preview section</button>
     <button id="btnExport" class="primary">⤓ Export</button>
+    <button id="btnCancel" hidden>✕ Cancel</button>
   </div>
 </header>
 
@@ -37,7 +44,7 @@
   </section>
 
   <aside class="term">
-    <div class="term-head">Terminal — run <code>claude</code>, then: “edit the video in Pre_final_edit”</div>
+    <div class="term-head">Terminal — run <code>claude</code>, then: “edit the video in this workspace”</div>
     <div id="terminal"></div>
   </aside>
 </main>

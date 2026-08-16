@@ -1,26 +1,44 @@
-// Claude Video Editor — frontend
+// Claude Video Editor — renderer.
+// Runs sandboxed (no Node, no network). Everything that touches disk, ffmpeg or a shell
+// goes through `window.editor`, the narrow contextBridge API defined in electron/preload.cjs.
 const $ = s => document.querySelector(s);
-const api = (p, o) => fetch('/api' + p, o).then(r => r.json());
-let project = null, dur = 1, sel = null;   // sel = {kind, index}
+const E = window.editor;
+let project = null, dur = 1, sel = null, WORK = '', job = null;   // sel = {kind, index}
 const video = $('#video');
 
+// small debug surface for the in-app smoke test (electron/smoke.mjs) — page data only
+window.__cve = { get project() { return project; }, get status() { return $('#status').textContent; },
+  loadVideo: (n, s) => loadVideo(n, s), termLog: '' };
+
 async function boot() {
-  const cfg = await api('/config'); $('#work').textContent = cfg.work;
+  const cfg = await E.config();
+  WORK = cfg.work; $('#work').textContent = cfg.work;
   await loadProject();
   loadVideo('FINAL.mp4');
   initTerminal();
   window.addEventListener('resize', renderTimeline);
   requestAnimationFrame(tickPlayhead);
+  // main watches project.json on disk (fs.watch) — no polling
+  E.onProjectChanged(reloadIfChanged);
+  E.onWorkspaceChanged(async (w) => { WORK = w; $('#work').textContent = w; sel = null; await loadProject(); loadVideo('FINAL.mp4'); });
+  $('#btnWorkspace').onclick = () => E.chooseWorkspace();
 }
 async function loadProject() {
-  project = await api('/project');
-  if (project.error) { setStatus(project.error); return; }
+  project = await E.getProject();
+  if (project.error) { setStatus(project.error); project = null; return; }
   dur = project.meta.duration;
   renderTimeline();
 }
+async function reloadIfChanged() {
+  if (Date.now() - lastEdit < 3000) return;              // don't clobber a fresh local edit
+  const p = await E.getProject();
+  if (p.error || JSON.stringify(p) === JSON.stringify(project)) return;
+  project = p; dur = p.meta.duration; renderTimeline(); if (sel) renderInspector();
+  setStatus('project reloaded (edited on disk)');
+}
 function loadVideo(name, seek) {
   $('#previewTag').textContent = name;
-  video.src = '/api/video?f=' + name + '&_=' + Date.now();
+  video.src = E.mediaUrl(WORK + '/' + name, true);
   if (seek != null) video.addEventListener('loadedmetadata', () => { video.currentTime = seek; }, { once: true });
 }
 function setStatus(t) { $('#status').textContent = t || ''; }
@@ -78,7 +96,7 @@ function renderTimeline() {
 // ---------- selection + inspector ----------
 function select(kind, index) { sel = { kind, index }; renderTimeline(); renderInspector(); const el = elemOf(sel); if (el) video.currentTime = (el.start || 0); }
 function elemOf(s) {
-  if (!s) return null;
+  if (!s || !project) return null;
   if (s.kind === 'scene') return project.scenes[s.index];
   if (s.kind === 'caption') return project.captions.cues[s.index];
   if (s.kind === 'music') return project.audio.music[s.index];
@@ -87,7 +105,7 @@ function elemOf(s) {
 }
 function field(label, val, on, type = 'text') {
   const f = document.createElement('div'); f.className = 'field';
-  f.innerHTML = `<label>${label}</label>`;
+  const l = document.createElement('label'); l.textContent = label; f.appendChild(l);
   const inp = document.createElement(type === 'area' ? 'textarea' : 'input');
   if (type !== 'area') inp.type = type; inp.value = val ?? '';
   inp.oninput = () => on(inp.value); f.appendChild(inp); return f;
@@ -96,7 +114,7 @@ function renderInspector() {
   const box = $('#inspector'); box.innerHTML = '';
   const e = elemOf(sel); if (!e) { box.innerHTML = '<div class="empty">Select an element on the timeline to edit it.</div>'; return; }
   const h = document.createElement('h3');
-  h.innerHTML = `<span>${sel.kind.toUpperCase()} — ${fmt(e.start||0)}</span>`;
+  const title = document.createElement('span'); title.textContent = `${sel.kind.toUpperCase()} — ${fmt(e.start || 0)}`; h.appendChild(title);
   const del = document.createElement('button'); del.className = 'del'; del.textContent = 'Delete'; del.onclick = () => remove();
   h.appendChild(del); box.appendChild(h);
 
@@ -108,7 +126,8 @@ function renderInspector() {
       s.ondblclick = () => { const v = prompt('Edit word', tk.t); if (v != null) { tk.t = v; save(); renderInspector(); } };
       toks.appendChild(s); });
     const wrap = document.createElement('div'); wrap.className = 'field';
-    wrap.innerHTML = '<label>Words</label>'; wrap.appendChild(toks); box.appendChild(wrap);
+    const wl = document.createElement('label'); wl.textContent = 'Words'; wrap.appendChild(wl);
+    wrap.appendChild(toks); box.appendChild(wrap);
     box.appendChild(field('Full text', e.tokens.map(t => t.t).join(' '), v => { const ws = v.split(/\s+/).filter(Boolean); e.tokens = ws.map((w, i) => ({ t: w, e: e.tokens[i]?.e || false })); save(); }));
     const o = e.overrides = e.overrides || {};
     box.appendChild(rowOf([
@@ -178,11 +197,19 @@ function remove() {
 }
 
 // ---------- save (debounced) ----------
-let saveT, lastEdit = 0; function save() { lastEdit = Date.now(); setStatus('● unsaved'); clearTimeout(saveT); saveT = setTimeout(async () => { await api('/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(project) }); lastEdit = Date.now(); setStatus('saved'); }, 400); }
+let saveT, lastEdit = 0;
+function save() {
+  lastEdit = Date.now(); setStatus('● unsaved'); clearTimeout(saveT);
+  saveT = setTimeout(async () => {
+    const r = await E.saveProject(project);
+    lastEdit = Date.now(); setStatus(r?.ok ? 'saved' : 'save failed: ' + (r?.error || ''));
+  }, 400);
+}
 
 // ---------- add cut / audio ----------
 document.addEventListener('click', e => {
   const k = e.target.dataset?.add; if (k) {
+    if (!project) return;
     if (k === 'cut') { project.cuts = project.cuts || []; const t = +video.currentTime.toFixed(2);
       project.cuts.push({ start: t, end: Math.min(dur, t + 2) }); save(); renderTimeline(); select('cut', project.cuts.length - 1); return; }
     project.audio = project.audio || { music: [], sfx: [] }; project.audio[k] = project.audio[k] || [];
@@ -196,44 +223,55 @@ async function genAudio() {
   const text = prompt(kind === 'voice' ? 'Voiceover text:' : 'Describe the ' + kind + ':', kind === 'sfx' ? 'whoosh transition' : ''); if (!text) return;
   const at = +(kind === 'music' ? 0 : video.currentTime).toFixed(1);
   setStatus('generating ' + kind + ' (ElevenLabs)…');
-  const r = await api('/audio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, text, at }) });
-  if (r.ok) { setStatus(kind + ' added ✓'); await loadProject(); } else setStatus('audio gen failed: ' + (r.error || '').slice(0, 80));
+  const r = await E.generateAudio({ kind, text, at });
+  if (r.ok) { setStatus(kind + ' added ✓'); await loadProject(); } else setStatus('audio gen failed: ' + String(r.error || '').slice(0, 80));
 }
 
-// ---------- render / export ----------
-function runRender(params, out, label) {
-  setStatus(label + '…'); $('#btnPreview').disabled = $('#btnExport').disabled = true;
-  const q = new URLSearchParams({ out, ...params });
-  const es = new EventSource('/api/render?' + q);
-  es.onmessage = ev => { const m = JSON.parse(ev.data);
-    if (m.type === 'progress') setStatus(label + ' ' + m.t);
-    if (m.type === 'done') { es.close(); $('#btnPreview').disabled = $('#btnExport').disabled = false;
-      if (m.code === 0) { setStatus(label + ' ✓'); loadVideo(out, params.a ? +params.a : 0); }
-      else setStatus(label + ' failed'); }
-  };
-  es.onerror = () => { es.close(); $('#btnPreview').disabled = $('#btnExport').disabled = false; setStatus('render error'); };
+// ---------- render / export (utilityProcess + MessagePort progress) ----------
+let offRender = null;
+function runRender({ range, out, label }) {
+  setStatus(label + '…'); busy(true);
+  offRender?.();
+  offRender = E.render.onEvent(m => {
+    if (job && m.id !== job) return;
+    if (m.type === 'start') setStatus(`${label} — rendering ${m.span ? fmt(m.span) + ' of video' : ''}`);
+    if (m.type === 'progress') setStatus(`${label} — ${m.stage} ${m.pct}%`);
+    if (m.type === 'stall') setStatus(`${label} — no progress for ${Math.round(m.idleMs / 1000)}s (still waiting)`);
+    if (m.type === 'error') { finish(); setStatus(label + ' failed: ' + String(m.error).slice(0, 120)); }
+    if (m.type === 'done') {
+      finish();
+      if (m.code === 0) { setStatus(`${label} ✓ ${m.result?.duration ? '(' + (+m.result.duration).toFixed(1) + 's)' : ''}`); loadVideo(out.split('/').pop(), range ? range[0] : 0); }
+      else setStatus(`${label} failed (exit ${m.code}) — ${String(m.tail || '').slice(-160)}`);
+    }
+  });
+  E.render.start({ out, range }).then(r => { job = r.id; });
+  function finish() { busy(false); offRender?.(); offRender = null; job = null; }
 }
-$('#btnPreview').onclick = () => { const e = elemOf(sel); const c = e ? (e.start || 0) : video.currentTime;
-  runRender({ a: Math.max(0, c - 2).toFixed(1), b: (c + ((elemOf(sel)?.dur) || 8) + 2).toFixed(1) }, 'preview.mp4', 'Preview'); };
-$('#btnExport').onclick = () => runRender({}, 'FINAL.mp4', 'Export');
+function busy(on) { $('#btnPreview').disabled = $('#btnExport').disabled = on; $('#btnCancel').hidden = !on; }
+$('#btnCancel').onclick = () => { if (job) { E.render.cancel(job); setStatus('cancelling…'); } };
+$('#btnPreview').onclick = () => {
+  const e = elemOf(sel); const c = e ? (e.start || 0) : video.currentTime;
+  const a = Math.max(0, c - 2), b = c + ((e?.dur) || 8) + 2;
+  runRender({ range: [+a.toFixed(1), +b.toFixed(1)], out: 'preview.mp4', label: 'Preview' });
+};
+$('#btnExport').onclick = () => runRender({ range: null, out: 'FINAL.mp4', label: 'Export' });
 
 // ---------- playhead ----------
 function tickPlayhead() { $('#playhead').style.left = (74 + t2x(video.currentTime || 0)) + 'px'; requestAnimationFrame(tickPlayhead); }
 $('#ruler').onclick = e => { const rect = e.currentTarget.getBoundingClientRect(); video.currentTime = x2t(e.clientX - rect.left); };
 
-// ---------- terminal ----------
-function initTerminal() {
-  if (!window.Terminal) { $('#terminal').textContent = 'terminal lib not loaded (offline?)'; return; }
-  const term = new Terminal({ fontSize: 12, theme: { background: '#0b0c10' }, cursorBlink: true });
+// ---------- terminal (node-pty lives in main; this is xterm + the bridge) ----------
+async function initTerminal() {
+  if (!window.Terminal) { $('#terminal').textContent = 'terminal lib not loaded'; return; }
+  const term = new Terminal({ fontSize: 12, theme: { background: '#0b0c10' }, cursorBlink: true, allowProposedApi: true });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open($('#terminal')); fit.fit();
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/pty');
-  ws.onmessage = m => { const d = JSON.parse(m.data); if (d.t === 'out') term.write(d.d); };
-  term.onData(d => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'in', d })));
-  const doFit = () => { fit.fit(); ws.readyState === 1 && ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows })); };
-  ws.onopen = doFit; window.addEventListener('resize', doFit);
-  // reload project when it changes on disk (e.g. Claude edited it)
-  setInterval(async () => { if (Date.now() - lastEdit < 3000) return; // don't clobber a fresh local edit
-    const p = await api('/project'); if (JSON.stringify(p) !== JSON.stringify(project)) { project = p; dur = p.meta.duration; renderTimeline(); if (sel) renderInspector(); setStatus('project reloaded (Claude edited it)'); } }, 4000);
+  E.term.onData(d => { term.write(d); window.__cve.termLog = (window.__cve.termLog + d).slice(-8000); });
+  E.term.onExit(() => term.write('\r\n[shell exited]\r\n'));
+  term.onData(d => E.term.write(d));
+  const r = await E.term.start();
+  if (!r?.ok) term.write('\r\n[terminal failed to start]\r\n');
+  const doFit = () => { fit.fit(); E.term.resize(term.cols, term.rows); };
+  doFit(); window.addEventListener('resize', doFit);
 }
-function fmt(t) { t = Math.max(0, Math.round(t)); return (t/60|0) + ':' + String(t % 60).padStart(2, '0'); }
+function fmt(t) { t = Math.max(0, Math.round(t)); return (t / 60 | 0) + ':' + String(t % 60).padStart(2, '0'); }
 boot();

@@ -1,23 +1,62 @@
 {
   "name": "claude-video-editor",
+  "productName": "Claude Video Editor",
   "version": "0.1.0",
-  "description": "Terminal-driven AI video editor: Claude Code edits → editable timeline → render. Built on the video-style-match skill + project.json (edit-as-data).",
+  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) → editable timeline → deterministic render.",
   "type": "module",
-  "bin": {
-    "claude-video-editor": "server.js"
-  },
+  "main": "electron/main.js",
+  "author": "Avijit Sarkar",
+  "license": "UNLICENSED",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "vendor": "node scripts/vendor.mjs",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "dev": "npm run vendor && electron .",
+    "smoke": "npm run vendor && CVE_SMOKE=ui,term,render CVE_SMOKE_OUT=./out/smoke electron .",
+    "pack": "npm run vendor && electron-builder --dir",
+    "dist": "npm run vendor && electron-builder --mac dmg --arm64",
+    "dist:win": "npm run vendor && electron-builder --win nsis --x64"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
-    "express": "^4.19.2",
-    "puppeteer-core": "^22.15.0",
-    "ws": "^8.17.0"
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "fix-path": "5.0.0",
+    "node-pty": "1.1.0"
   },
-  "optionalDependencies": {
-    "node-pty": "^1.0.0"
+  "devDependencies": {
+    "@electron/rebuild": "4.2.0",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "puppeteer-core": "^22.15.0"
+  },
+  "build": {
+    "appId": "com.avijitsarkar.claudevideoeditor",
+    "productName": "Claude Video Editor",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "schema/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": [{ "target": "dmg", "arch": ["arm64"] }],
+      "darkModeSupport": true,
+      "identity": null,
+      "hardenedRuntime": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": { "title": "Claude Video Editor ${version}" },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
 }
