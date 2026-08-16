@@ -1,0 +1,23 @@
+{
+  "name": "claude-video-editor",
+  "version": "0.1.0",
+  "description": "Terminal-driven AI video editor: Claude Code edits → editable timeline → render. Built on the video-style-match skill + project.json (edit-as-data).",
+  "type": "module",
+  "bin": {
+    "claude-video-editor": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "express": "^4.19.2",
+    "puppeteer-core": "^22.15.0",
+    "ws": "^8.17.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  }
+}

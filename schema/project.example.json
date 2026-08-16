@@ -1,0 +1,28 @@
+{
+  "//": "project.json — the edit-as-data model. Claude and the editor both read/write this. Every field is editable.",
+  "version": 1,
+  "meta": { "source": "/path/raw.mov", "graded": "graded_master.mp4", "width": 1920, "height": 1080, "fps": 30, "duration": 1898.5, "style": "coral-ink-bone" },
+  "grade": { "filter": "eq=brightness=0.02:contrast=1.15:saturation=0.59,colorbalance=rm=0.03:bm=-0.05" },
+  "captions": {
+    "defaults": { "style": "highlight", "font": "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf", "fontsize": 60, "cy": 713, "color": "#FFFFFF", "highlight": "#E5533D" },
+    "cues": [
+      { "id": "c0001", "start": 0.2, "end": 1.1, "tokens": [ { "t": "some", "e": false }, { "t": "secret", "e": false }, { "t": "formula", "e": true } ],
+        "overrides": { "cy": 800, "fontsize": 72, "highlight": "#E5533D" } }
+    ]
+  },
+  "scenes": [
+    { "id": "priorities", "type": "pills", "start": 195, "dur": 7, "headline": "What the country wants to get good at",
+      "items": [ { "text": "ARTIFICIAL INTELLIGENCE", "color": "coral" }, { "text": "HEALTHCARE TECH", "color": "lime" }, { "text": "CYBERSECURITY", "color": "ghost" } ] },
+    { "id": "proof", "type": "counter", "start": 1511, "dur": 5, "headline": "What we actually got", "prefix": "£", "target": 100000, "sub": "INNOVATE UK — 2 PROJECTS" },
+    { "id": "strings", "type": "checklist", "start": 307, "dur": 9, "headline": "A grant comes with strings", "items": ["RULES", "REPORTING", "MILESTONES"] },
+    { "id": "loan", "type": "strike", "start": 843, "dur": 5, "headline": "A loan is not a grant", "old": "BUSINESS LOAN — DEBT", "new": "A GRANT" },
+    { "id": "risk", "type": "stat", "start": 347, "dur": 5, "headline": "So what a grant really is", "big": "SHARE THE RISK", "sub": "SOMEONE BACKS YOUR INNOVATION" }
+  ],
+  "cuts": [ { "start": 250.0, "end": 258.0 } ],
+  "audio": {
+    "loudnessLUFS": -14,
+    "voice": { "source": "graded" },
+    "music": [ { "id": "m1", "src": "music/bed.mp3", "start": 0, "dur": 1898, "gain": -20, "fadeIn": 2, "fadeOut": 3 } ],
+    "sfx": [ { "id": "s1", "src": "sfx/whoosh.mp3", "start": 195.0, "gain": -6 } ]
+  }
+}

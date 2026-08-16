@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Video Editor</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">◆ Claude Video Editor <span id="work" class="muted"></span></div>
+  <div class="actions">
+    <span id="status" class="muted"></span>
+    <button id="btnPreview">▶ Preview section</button>
+    <button id="btnExport" class="primary">⤓ Export</button>
+  </div>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="preview">
+      <video id="video" controls playsinline></video>
+      <div id="previewTag" class="tag">FINAL.mp4</div>
+    </div>
+    <div class="timeline" id="timeline">
+      <div class="ruler" id="ruler"></div>
+      <div class="track" id="trackScenes"><label>Scenes</label><div class="lane" id="laneScenes"></div></div>
+      <div class="track" id="trackCaps"><label>Captions</label><div class="lane" id="laneCaps"></div></div>
+      <div class="track" id="trackCuts"><label>Cuts</label><div class="lane" id="laneCuts">
+        <button class="add" data-add="cut">+ cut at playhead</button></div></div>
+      <div class="track" id="trackAudio"><label>Audio</label><div class="lane" id="laneAudio">
+        <button class="add" data-add="music">+ music</button><button class="add" data-add="sfx">+ sfx</button>
+        <button class="add" data-gen="1">✨ generate (ElevenLabs)</button></div></div>
+      <div class="playhead" id="playhead"></div>
+    </div>
+    <div class="inspector" id="inspector"><div class="empty">Select an element on the timeline to edit it.</div></div>
+  </section>
+
+  <aside class="term">
+    <div class="term-head">Terminal — run <code>claude</code>, then: “edit the video in Pre_final_edit”</div>
+    <div id="terminal"></div>
+  </aside>
+</main>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
