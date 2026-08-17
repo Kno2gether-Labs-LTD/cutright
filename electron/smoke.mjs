@@ -75,7 +75,8 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
       // launch the real TUI and screenshot it — visual proof the agent runs inside the app
       await win.webContents.executeJavaScript(`window.editor.term.write('claude\\r')`);
       await wait(25000);
-      writeFileSync(out + '-claude.png', (await win.webContents.capturePage()).toPNG());
+      try { writeFileSync(out + '-claude.png', (await win.webContents.capturePage()).toPNG()); }
+      catch (e) { console.log('[smoke] claude screenshot unavailable:', e.message); }
       check('claudeTui', { screenshot: out + '-claude.png',
         tail: strip(await win.webContents.executeJavaScript(`window.__cve.termLog.slice(-500)`)).replace(/\s+/g,' ').slice(-200) });
       await win.webContents.executeJavaScript(`window.editor.term.write('\\u0003')`);
@@ -257,9 +258,17 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
         await wait(panel === 'autocut' ? 12000 : 2500);
       }
     }
-    const img = await win.webContents.capturePage();
-    writeFileSync(out + '.png', img.toPNG());
-    report.screenshot = out + '.png';
+    // The screenshot is a diagnostic, not an assertion: capturePage can fail with a
+    // compositor error when the window is occluded (common on CI runners), and that must
+    // not turn a green suite red.
+    try {
+      const img = await win.webContents.capturePage();
+      writeFileSync(out + '.png', img.toPNG());
+      report.screenshot = out + '.png';
+    } catch (e) {
+      report.screenshotError = e?.message || String(e);
+      console.log('[smoke] screenshot unavailable:', report.screenshotError);
+    }
   } catch (e) {
     report.error = e?.stack || String(e);
   }

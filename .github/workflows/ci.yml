@@ -51,7 +51,11 @@ jobs:
       - name: Build a synthetic test project
         run: node scripts/make-test-workspace.mjs /tmp/cutright-test-ws
       - name: Run the suite (core tags — no network, no model downloads)
-        run: npm run vendor && WORK=/tmp/cutright-test-ws CVE_TEST_TAGS=core CVE_SMOKE=ui,edit CVE_SMOKE_OUT=./out/ci electron . --user-data-dir=/tmp/ci-profile
+        run: |
+          npm run vendor
+          # `electron` is not on PATH in CI — call the local binary directly
+          WORK=/tmp/cutright-test-ws CVE_TEST_TAGS=core CVE_SMOKE=ui,edit CVE_SMOKE_OUT=./out/ci \
+            ./node_modules/.bin/electron . --user-data-dir=/tmp/ci-profile
       - name: Publish the result
         if: always()
         uses: actions/upload-artifact@v4
