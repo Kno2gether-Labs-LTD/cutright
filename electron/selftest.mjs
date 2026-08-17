@@ -265,6 +265,55 @@ export async function runEditTests({ win, settings }) {
     return r;
   });
 
+  // ---------------------------------------------------------------- look + transitions
+  await test('look: presets, grain/vignette and audio polish persist', async () => {
+    const r = await js(`(async () => {
+      document.querySelector('#btnLook').click();
+      await new Promise(r => setTimeout(r, 300));
+      [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Teal & orange').click();
+      await new Promise(r => setTimeout(r, 200));
+      const set = (label, val) => { const f = [...document.querySelectorAll('#inspector .field')]
+        .find(f => f.querySelector('label')?.textContent === label); const i = f.querySelector('input');
+        i.value = val; i.dispatchEvent(new Event('input')); };
+      set('Grain', '7'); set('Vignette', '0.4');
+      const sel = [...document.querySelectorAll('#inspector .field')]
+        .find(f => f.querySelector('label')?.textContent === 'Polish').querySelector('select');
+      sel.value = 'podcast'; sel.dispatchEvent(new Event('change'));
+      return { kind: document.querySelector('#inspector .kind')?.textContent };
+    })()`, true);
+    await settle();
+    const p = disk();
+    expect(p.grade.look.preset === 'teal-orange', 'look preset not saved: ' + JSON.stringify(p.grade.look));
+    expect(p.grade.look.grain === 7 && p.grade.look.vignette === 0.4, 'grain/vignette not saved');
+    expect(p.audio.polish === 'podcast', 'audio polish not saved');
+    return { panel: r.kind, look: p.grade.look, polish: p.audio.polish };
+  });
+
+  await test('transitions: a cut can carry one and it survives to disk', async () => {
+    const r = await js(`(async () => {
+      document.querySelector('#video').currentTime = 20;
+      document.querySelector('[data-add="cut"]').click();
+      await new Promise(r => setTimeout(r, 300));
+      const sel = [...document.querySelectorAll('#inspector .field')]
+        .find(f => f.querySelector('label')?.textContent === 'Type').querySelector('select');
+      const options = [...sel.options].map(o => o.value);
+      sel.value = 'dip'; sel.dispatchEvent(new Event('change'));
+      const set = (label, val) => { const f = [...document.querySelectorAll('#inspector .field')]
+        .find(f => f.querySelector('label')?.textContent === label); const i = f.querySelector('input');
+        i.value = val; i.dispatchEvent(new Event('input')); };
+      set('Length (s)', '0.5');
+      return { options };
+    })()`, true);
+    await settle();
+    const cut = disk().cuts.slice(-1)[0];
+    expect(cut.transition === 'dip' && cut.tdur === 0.5, 'transition not saved: ' + JSON.stringify(cut));
+    expect(r.options.includes('crossfade') && r.options.includes('whip'), 'transition types missing');
+    // clean up the test cut
+    const p = disk(); p.cuts.pop(); writeFileSync(projectFile, JSON.stringify(p, null, 2));
+    await wait(300);
+    return { cut, types: r.options.length };
+  });
+
   // ---------------------------------------------------------------- templates
   await test('templates: both packs load with previews and presets', async () => {
     const r = await js(`(async () => {

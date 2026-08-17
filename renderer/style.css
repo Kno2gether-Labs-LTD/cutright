@@ -308,3 +308,7 @@ button.accent:hover:not(:disabled) { background: #2e281c; border-color: #6a563a;
 .preset .ph { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
 .preset .ph b { font-size: 11.5px; font-weight: 600; }
 .preset .pv { margin-top: 8px; }
+
+select { font: inherit; font-size: 12px; color: var(--text); background: #0e1015;
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; width: 100%; }
+select:focus { outline: none; border-color: #46506a; }

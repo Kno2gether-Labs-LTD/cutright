@@ -265,6 +265,7 @@ function initTimelineInteraction() {
   $('#btnAutoCut').onclick = () => runAutoCut();
   $('#btnTranscribe').onclick = () => openTranscribePanel();
   $('#btnTemplates').onclick = () => openTemplatesPanel();
+  $('#btnLook').onclick = () => openLookPanel();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -302,6 +303,18 @@ function field(label, val, on, type = 'text') {
   inp.oninput = () => on(inp.value);
   f.appendChild(inp);
   return f;
+}
+function selectField(label, value, options, on) {
+  const f = document.createElement('div'); f.className = 'field';
+  const l = document.createElement('label'); l.textContent = label; f.appendChild(l);
+  const sel = document.createElement('select');
+  options.forEach(([v, text]) => {
+    const o = document.createElement('option'); o.value = v; o.textContent = text;
+    if (String(v) === String(value)) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.onchange = () => on(sel.value);
+  f.appendChild(sel); return f;
 }
 const rowOf = (fields) => { const r = document.createElement('div'); r.className = 'row'; fields.forEach((f) => r.appendChild(f)); return r; };
 const hint = (t) => { const p = document.createElement('p'); p.className = 'hint'; p.textContent = t; return p; };
@@ -417,6 +430,16 @@ function renderCutInspector(box, e) {
     btn('Set start = playhead', () => { e.start = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
     btn('Set end = playhead', () => { e.end = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
   ));
+  box.appendChild(sep());
+  box.appendChild(sechead('Transition at this seam'));
+  box.appendChild(rowOf([
+    selectField('Type', e.transition || 'none', [
+      ['none', 'Hard cut'], ['crossfade', 'Crossfade'], ['dip', 'Dip to black'], ['dipwhite', 'Dip to white'],
+      ['whip', 'Whip / slide'], ['wiperight', 'Wipe'], ['circle', 'Circle open'], ['smooth', 'Smooth'], ['pixel', 'Pixelize'],
+    ], (v) => { if (v === 'none') delete e.transition; else e.transition = v; save(); renderTimeline(); }),
+    field('Length (s)', e.tdur ?? 0.3, (v) => { e.tdur = +v; save(); }, 'number'),
+  ]));
+  box.appendChild(hint('A transition blends the two sides of the cut instead of butting them together. It also shortens the export by its length — captions, scenes and overlays are re-timed to match.'));
 }
 
 function renderOverlayInspector(box, e) {
@@ -524,6 +547,67 @@ async function genAudio() {
   const r = await E.generateAudio({ kind, text, at });
   if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- look (film grade)
+// Applied at render time on top of the graded master, so it is free to change and never
+// destroys the original grade.
+const LOOK_PRESETS = [
+  ['none', 'None', 'the graded master as-is'],
+  ['film', 'Film', 'gentle S-curve, slightly desaturated'],
+  ['warm', 'Warm', 'golden skin tones'],
+  ['cool', 'Cool', 'cold, clean, corporate'],
+  ['teal-orange', 'Teal & orange', 'the blockbuster split-tone'],
+  ['bleach', 'Bleach bypass', 'harsh, desaturated, high contrast'],
+  ['noir', 'Noir', 'black and white, strong contrast'],
+  ['vhs', 'VHS', 'noisy, soft, nostalgic'],
+];
+const POLISH_PRESETS = [['none', 'None'], ['voice', 'Voice (compressed)'], ['warm', 'Warm voice'], ['podcast', 'Podcast (limited)']];
+
+function openLookPanel() {
+  if (!project) return;
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'look';
+  project.grade = project.grade || {};
+  const look = typeof project.grade.look === 'string' ? { preset: project.grade.look } : (project.grade.look || {});
+  project.grade.look = look;
+  project.audio = project.audio || {};
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'look';
+  title.append(kind);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const grid = document.createElement('div'); grid.className = 'btnrow';
+  LOOK_PRESETS.forEach(([id, name, desc]) => {
+    const b = btn(name, () => { look.preset = id; save(); openLookPanel(); });
+    b.title = desc;
+    if ((look.preset || 'none') === id) b.classList.add('primary');
+    grid.appendChild(b);
+  });
+  box.appendChild(grid);
+
+  box.appendChild(rowOf([
+    field('Grain', look.grain ?? 0, (v) => { look.grain = +v; save(); }, 'number'),
+    field('Vignette', look.vignette ?? 0, (v) => { look.vignette = +v; save(); }, 'number'),
+    field('Bloom', look.bloom ?? 0, (v) => { look.bloom = +v; save(); }, 'number'),
+  ]));
+  box.appendChild(field('Extra ffmpeg filter (advanced)', look.filter || '', (v) => { look.filter = v; save(); }));
+
+  box.appendChild(sep());
+  box.appendChild(sechead('Audio'));
+  box.appendChild(rowOf([
+    selectField('Polish', project.audio.polish || 'none', POLISH_PRESETS, (v) => {
+      if (v === 'none') delete project.audio.polish; else project.audio.polish = v; save();
+    }),
+    field('Loudness (LUFS)', project.audio.loudnessLUFS ?? -14, (v) => { project.audio.loudnessLUFS = +v; save(); }, 'number'),
+  ]));
+
+  box.appendChild(sep());
+  box.appendChild(btnRow(btn('Preview this look here', () => previewAround(video.currentTime, 6), 'primary')));
+  box.appendChild(hint('Grain 0–40, vignette and bloom 0–1. The look is applied when rendering, over the graded master — nothing is baked in, so you can change your mind at any time.'));
 }
 
 // ---------------------------------------------------------------- templates
@@ -926,6 +1010,7 @@ function initKeys() {
       case 'f': case 'F': fitZoom(); renderTimeline(); break;
       case 'a': case 'A': runAutoCut(); break;
       case 't': case 'T': openTemplatesPanel(); break;
+      case 'l': case 'L': openLookPanel(); break;
       case 'p': case 'P': $('#btnPreview').click(); break;
       case 'e': case 'E': $('#btnExport').click(); break;
       default: return;
