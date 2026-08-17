@@ -8,7 +8,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, watch, statSync, createReadStream } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -109,9 +109,15 @@ function allowedPath(p) {
 function registerMediaProtocol() {
   protocol.handle('cve', async (request) => {
     const url = new URL(request.url);
-    if (url.hostname !== 'media') return new Response('not found', { status: 404 });
     const want = url.searchParams.get('p') || '';
-    const file = allowedPath(isAbsolute(want) ? want : join(settings.work, want));
+    let file = null;
+    if (url.hostname === 'template') {
+      // template assets (preview images) live in the app or user template dirs
+      const abs = resolve(want);
+      file = templateDirs().some((d) => abs.startsWith(resolve(d) + sep)) ? abs : null;
+    } else if (url.hostname === 'media') {
+      file = allowedPath(isAbsolute(want) ? want : join(settings.work, want));
+    } else return new Response('not found', { status: 404 });
     if (!file || !existsSync(file)) return new Response('not found', { status: 404 });
 
     const size = statSync(file).size;
@@ -306,6 +312,78 @@ async function checkEnvironment() {
   else if (!pillow) missing.push({ tool: 'Pillow (python)', hint: `${tools.python} -m pip install --user Pillow` });
   if (!engineOk) missing.push({ tool: 'render engine', hint: 'install the video-edit skill at ' + settings.engine });
   return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
+}
+
+// ---------------------------------------------------------------- templates
+// A template is data + composition files (see templates/README.md). Two search paths:
+// the ones bundled with the app, and the user's own — the user's win on an id clash, so
+// a downloaded template can supersede a built-in one.
+function templateDirs() {
+  return [join(app.getPath('userData'), 'templates'), join(ROOT, 'templates')];
+}
+function listTemplates() {
+  const found = new Map();
+  for (const dir of templateDirs()) {
+    if (!existsSync(dir)) continue;
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const manifestPath = join(dir, ent.name, 'template.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        if (!m.id || found.has(m.id)) continue;             // first path wins (user dir)
+        const preview = join(dir, ent.name, m.preview || 'preview.png');
+        found.set(m.id, { ...m, dir: join(dir, ent.name), builtin: dir !== templateDirs()[0],
+          previewUrl: existsSync(preview) ? 'cve://template/?p=' + encodeURIComponent(preview) : null });
+      } catch (e) { log('template manifest unreadable', manifestPath, e.message); }
+    }
+  }
+  return [...found.values()];
+}
+
+function applyTemplate(id) {
+  const t = listTemplates().find((x) => x.id === id);
+  if (!t) return { ok: false, error: 'unknown template: ' + id };
+  if (!settings.work) return { ok: false, error: 'no workspace open' };
+  try {
+    const p = JSON.parse(readFileSync(projectPath(), 'utf8'));
+    p.meta = p.meta || {};
+    p.meta.template = t.id;
+    p.meta.style = t.id;                                   // the engine reads meta.style
+    p.captions = p.captions || { defaults: {}, cues: [] };
+    p.captions.defaults = { ...p.captions.defaults, ...(t.captions || {}) };
+    writeFileSync(projectPath(), JSON.stringify(p, null, 2));
+    return { ok: true, template: t.id, captions: p.captions.defaults };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
+function renderPreset(webContents, opts = {}) {
+  if (!settings.work) return { error: 'no workspace open' };
+  const t = listTemplates().find((x) => x.id === opts.template);
+  if (!t) return { error: 'unknown template' };
+  const preset = (t.overlays || []).find((o) => o.id === opts.preset);
+  if (!preset) return { error: 'unknown preset' };
+
+  const safe = (s) => String(s).replace(/[^a-z0-9_-]+/gi, '-').slice(0, 40).toLowerCase();
+  const outPath = join(settings.work, 'overlays', `${safe(t.id)}-${safe(preset.id)}-${Date.now()}.mov`);
+
+  const child = utilityProcess.fork(join(__dir, 'template-worker.cjs'), [], {
+    serviceName: 'cve-template', stdio: 'pipe', env: { ...process.env },
+  });
+  const id = 'tpl' + Date.now();
+  const { port1, port2 } = new MessageChannelMain();
+  child.postMessage({ type: 'port' }, [port1]);
+  webContents.postMessage('template:port', { id }, [port2]);
+  child.stderr?.on('data', (d) => log('[template!]', d.toString().trim().slice(0, 300)));
+
+  child.postMessage({ type: 'render-preset', job: {
+    templateDir: t.dir, engine: t.engine || 'hyperframes',
+    composition: preset.composition, remotionId: preset.remotionId, remotionEntry: preset.remotionEntry,
+    vars: opts.vars || {}, outPath, fps: Number(opts.fps || 30), quality: opts.quality || 'high',
+  } });
+  return { id, out: outPath };
 }
 
 // ---------------------------------------------------------------- API keys
@@ -516,6 +594,19 @@ function registerIpc() {
 
   ipcMain.handle('env:check', () => checkEnvironment());
   ipcMain.handle('analysis:autocut', (_e, o) => analyzeCuts(o || {}));
+  ipcMain.handle('templates:list', () => listTemplates().map((t) => ({
+    id: t.id, name: t.name, description: t.description, version: t.version, engine: t.engine,
+    author: t.author, license: t.license, builtin: t.builtin, previewUrl: t.previewUrl,
+    tokens: t.tokens, overlays: (t.overlays || []).map((o) => ({ id: o.id, name: o.name, duration: o.duration, vars: o.vars || [] })),
+  })));
+  ipcMain.handle('templates:apply', (_e, id) => applyTemplate(String(id)));
+  ipcMain.handle('templates:renderPreset', (e, o) => renderPreset(e.sender, o || {}));
+  ipcMain.handle('templates:openFolder', () => {
+    const dir = join(app.getPath('userData'), 'templates');
+    mkdirSync(dir, { recursive: true });
+    shell.openPath(dir);
+    return { ok: true, dir };
+  });
   ipcMain.handle('stt:start', (e, o) => transcribeMedia(e.sender, o || {}));
   ipcMain.handle('stt:engines', async () => {
     const has = (b) => !!which(b);

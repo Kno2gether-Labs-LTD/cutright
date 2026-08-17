@@ -1,0 +1,55 @@
+{
+  "id": "coral-ink-bone",
+  "name": "Coral / Ink / Bone",
+  "version": "1.0.0",
+  "author": "Cutwright",
+  "license": "Apache-2.0",
+  "description": "Editorial serif headlines, rounded-sans pills and word-by-word highlight captions. The default look.",
+  "engine": "hyperframes",
+  "sceneEngine": "pillow",
+  "tokens": {
+    "coral": "#E5533D", "ink": "#1A1A18", "bone": "#F1EFE7", "lime": "#C4D82E", "sky": "#6FB7E8",
+    "displayFont": "Bodoni 72, Didot, Georgia, serif",
+    "uiFont": "Arial Rounded MT Bold, Arial Rounded Bold, Arial, sans-serif"
+  },
+  "captions": {
+    "style": "highlight",
+    "font": "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
+    "color": "#FFFFFF",
+    "highlight": "#E5533D"
+  },
+  "scenes": ["pills", "checklist", "counter", "stat", "strike"],
+  "overlays": [
+    {
+      "id": "lower-third",
+      "name": "Lower third",
+      "composition": "overlays/lower-third.html",
+      "duration": 4,
+      "vars": [
+        { "name": "tag", "label": "Tag", "default": "SELF-HOSTED" },
+        { "name": "title", "label": "Title", "default": "YOUR OWN RELAY SERVER" },
+        { "name": "sub", "label": "Subtitle", "default": "RUNS ON YOUR VPS" }
+      ]
+    },
+    {
+      "id": "title-card",
+      "name": "Title card",
+      "composition": "overlays/title-card.html",
+      "duration": 3.5,
+      "vars": [
+        { "name": "kicker", "label": "Kicker", "default": "CHAPTER 01" },
+        { "name": "title", "label": "Title", "default": "Set up the relay" }
+      ]
+    },
+    {
+      "id": "callout",
+      "name": "Callout chip",
+      "composition": "overlays/callout.html",
+      "duration": 2.5,
+      "vars": [
+        { "name": "text", "label": "Text", "default": "ONE CLICK" },
+        { "name": "corner", "label": "Corner (tl/tr/bl/br)", "default": "tr" }
+      ]
+    }
+  ]
+}

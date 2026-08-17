@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"text","type":"string","label":"Text","default":"ONE CLICK"},
+  {"id":"accent","type":"color","label":"Accent","default":"#C4D82E"},
+  {"id":"corner","type":"enum","label":"Corner","default":"tr","options":[
+    {"value":"tl","label":"Top left"},{"value":"tr","label":"Top right"},
+    {"value":"bl","label":"Bottom left"},{"value":"br","label":"Bottom right"}]}
+]'>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Callout — coral/ink/bone</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    body { margin: 0; background: transparent; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; }
+    .chip {
+      position: absolute; display: block; background: var(--accent); color: #1a1a18;
+      font: 700 40px/1 var(--ui); letter-spacing: 2px; padding: 22px 34px; border-radius: 999px;
+      box-shadow: 5px 7px 0 rgba(26,26,24,.45); transform-origin: center;
+    }
+    .tl { top: 90px; left: 110px; } .tr { top: 90px; right: 110px; }
+    .bl { bottom: 110px; left: 110px; } .br { bottom: 110px; right: 110px; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="callout" data-start="0" data-width="1920" data-height="1080" data-duration="2.5">
+    <section class="clip" data-start="0" data-duration="2.5" data-track-index="1">
+      <span id="co-chip" class="chip"></span>
+    </section>
+  </div>
+  <script>
+    const V = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
+    document.documentElement.style.setProperty('--accent', V.accent || '#C4D82E');
+    document.documentElement.style.setProperty('--ui', '"Arial Rounded MT Bold", Arial, sans-serif');
+    const chip = document.getElementById('co-chip');
+    chip.textContent = V.text || 'ONE CLICK';
+    chip.classList.add(['tl','tr','bl','br'].includes(V.corner) ? V.corner : 'tr');
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from('#co-chip', { scale: 0.4, opacity: 0, rotate: -6, duration: 0.45, ease: 'back.out(2.2)' }, 0.05)
+      .to('#co-chip', { scale: 1.06, duration: 0.18, ease: 'power2.out' }, 0.5)
+      .to('#co-chip', { scale: 1, duration: 0.22, ease: 'power2.inOut' }, 0.68)
+      .to('#co-chip', { scale: 0.5, opacity: 0, duration: 0.35, ease: 'power3.in' }, 2.05);
+    window.__timelines['callout'] = tl;
+  </script>
+</body>
+</html>

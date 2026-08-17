@@ -37,6 +37,17 @@ ipcRenderer.on('transcribe:port', (e, { id }) => {
   port.start();
 });
 
+const tplListeners = new Set();
+ipcRenderer.on('template:port', (e, { id }) => {
+  const port = e.ports[0];
+  port.onmessage = (ev) => {
+    const msg = { id, ...ev.data };
+    if (msg.type === 'done' || msg.type === 'error') { try { port.close(); } catch {} }
+    for (const cb of tplListeners) { try { cb(msg); } catch {} }
+  };
+  port.start();
+});
+
 const ptyData = new Set(), ptyExit = new Set();
 ipcRenderer.on('pty:data', (_e, d) => { for (const cb of ptyData) { try { cb(String(d)); } catch {} } });
 ipcRenderer.on('pty:exit', () => { for (const cb of ptyExit) { try { cb(); } catch {} } });
@@ -64,6 +75,17 @@ contextBridge.exposeInMainWorld('editor', {
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),
   pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    apply: (id) => ipcRenderer.invoke('templates:apply', str(id)),
+    renderPreset: (o = {}) => ipcRenderer.invoke('templates:renderPreset', {
+      template: str(o.template), preset: str(o.preset),
+      vars: o.vars && typeof o.vars === 'object' ? o.vars : {},
+      fps: num(o.fps, 30), quality: str(o.quality) || 'high',
+    }),
+    openFolder: () => ipcRenderer.invoke('templates:openFolder'),
+    onEvent: on(tplListeners),
+  },
   transcribe: {
     start: (o = {}) => ipcRenderer.invoke('stt:start', {
       engine: str(o.engine), model: str(o.model), language: str(o.language),

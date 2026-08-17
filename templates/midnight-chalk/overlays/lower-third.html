@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"title","type":"string","label":"Title","default":"THE RELAY SERVER"},
+  {"id":"sub","type":"string","label":"Subtitle","default":"self-hosted, one click"},
+  {"id":"accent","type":"color","label":"Accent","default":"#F2B441"}
+]'>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Lower third — midnight chalk</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    body { margin: 0; background: transparent; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; }
+    .wrap { position: absolute; left: 120px; bottom: 160px; }
+    .plate {
+      position: absolute; inset: -26px -40px; background: rgba(18,22,26,.82);
+      border: 2px solid rgba(243,239,230,.22); border-radius: 4px; transform-origin: left center;
+    }
+    .title { position: relative; display: block; font: 400 62px/1 var(--display); color: #f3efe6; letter-spacing: 1px; }
+    .sub { position: relative; display: block; margin-top: 14px; font: 400 26px/1 var(--mono);
+      color: var(--accent); letter-spacing: 3px; text-transform: lowercase; }
+    .chalk { position: absolute; left: -40px; bottom: -44px; height: 4px; width: 620px;
+      background: repeating-linear-gradient(90deg, var(--accent) 0 26px, transparent 26px 34px);
+      transform-origin: left center; opacity: .9; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="chalk3" data-start="0" data-width="1920" data-height="1080" data-duration="4">
+    <section class="clip" data-start="0" data-duration="4" data-track-index="1">
+      <div class="wrap">
+        <div id="ch-plate" class="plate"></div>
+        <span id="ch-title" class="title"></span>
+        <span id="ch-sub" class="sub"></span>
+        <div id="ch-rule" class="chalk"></div>
+      </div>
+    </section>
+  </div>
+  <script>
+    const V = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
+    const root = document.documentElement;
+    root.style.setProperty('--accent', V.accent || '#F2B441');
+    root.style.setProperty('--display', 'Georgia, "Times New Roman", serif');
+    root.style.setProperty('--mono', '"SF Mono", ui-monospace, Menlo, monospace');
+    document.getElementById('ch-title').textContent = V.title || '';
+    document.getElementById('ch-sub').textContent = V.sub || '';
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from('#ch-plate', { scaleX: 0, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0)
+      .from('#ch-title', { y: 20, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.28)
+      .from('#ch-sub', { y: 14, opacity: 0, duration: 0.45, ease: 'power3.out' }, 0.42)
+      .from('#ch-rule', { scaleX: 0, duration: 0.6, ease: 'power2.out' }, 0.5)
+      .to('#ch-rule', { scaleX: 0, duration: 0.4, ease: 'power2.in' }, 3.2)
+      .to(['#ch-title', '#ch-sub'], { opacity: 0, y: -12, duration: 0.4, ease: 'power3.in' }, 3.3)
+      .to('#ch-plate', { scaleX: 0, opacity: 0, duration: 0.45, ease: 'power3.in' }, 3.45);
+    window.__timelines['chalk3'] = tl;
+  </script>
+</body>
+</html>

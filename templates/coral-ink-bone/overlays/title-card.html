@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"kicker","type":"string","label":"Kicker","default":"CHAPTER 01"},
+  {"id":"title","type":"string","label":"Title","default":"Set up the relay"},
+  {"id":"accent","type":"color","label":"Accent","default":"#E5533D"}
+]'>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Title card — coral/ink/bone</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    body { margin: 0; background: transparent; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+    .card { text-align: center; }
+    .kicker { display: block; font: 700 30px/1 var(--ui); letter-spacing: 8px; color: var(--accent); margin-bottom: 22px; }
+    .title { display: block; font: 400 118px/1.02 var(--display); color: #f1efe7;
+      text-shadow: 0 8px 32px rgba(0,0,0,.55); }
+    .bar { display: block; height: 12px; width: 0; background: var(--accent); margin: 30px auto 0; border-radius: 6px; }
+    .scrim { position: absolute; inset: 0; background: radial-gradient(60% 60% at 50% 50%, rgba(12,12,14,.82), rgba(12,12,14,0)); }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="titlecard" data-start="0" data-width="1920" data-height="1080" data-duration="3.5">
+    <section class="clip" data-start="0" data-duration="3.5" data-track-index="1">
+      <div id="tc-scrim" class="scrim"></div>
+      <div class="card">
+        <span id="tc-kicker" class="kicker"></span>
+        <span id="tc-title" class="title"></span>
+        <span id="tc-bar" class="bar"></span>
+      </div>
+    </section>
+  </div>
+  <script>
+    const V = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
+    const root = document.documentElement;
+    root.style.setProperty('--accent', V.accent || '#E5533D');
+    root.style.setProperty('--ui', '"Arial Rounded MT Bold", Arial, sans-serif');
+    root.style.setProperty('--display', '"Bodoni 72", Didot, Georgia, serif');
+    document.getElementById('tc-kicker').textContent = V.kicker || '';
+    document.getElementById('tc-title').textContent = V.title || '';
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from('#tc-scrim', { opacity: 0, duration: 0.4, ease: 'power2.out' }, 0)
+      .from('#tc-kicker', { y: 24, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.15)
+      .from('#tc-title', { y: 44, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.28)
+      .to('#tc-bar', { width: 280, duration: 0.55, ease: 'power2.out' }, 0.6)
+      .to('#tc-bar', { width: 0, duration: 0.35, ease: 'power2.in' }, 2.7)
+      .to(['#tc-title', '#tc-kicker'], { y: -18, opacity: 0, duration: 0.45, ease: 'power3.in' }, 2.85)
+      .to('#tc-scrim', { opacity: 0, duration: 0.45, ease: 'power2.in' }, 2.95);
+    window.__timelines['titlecard'] = tl;
+  </script>
+</body>
+</html>

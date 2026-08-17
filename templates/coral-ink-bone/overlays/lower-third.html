@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"tag","type":"string","label":"Tag","default":"SELF-HOSTED"},
+  {"id":"title","type":"string","label":"Title","default":"YOUR OWN RELAY SERVER"},
+  {"id":"sub","type":"string","label":"Subtitle","default":"RUNS ON YOUR VPS"},
+  {"id":"accent","type":"color","label":"Accent","default":"#E5533D"},
+  {"id":"side","type":"enum","label":"Side","default":"left","options":[{"value":"left","label":"Left"},{"value":"right","label":"Right"}]}
+]'>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Lower third — coral/ink/bone</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    /* Nothing paints the background: rendered with --format mov, so it stays transparent. */
+    body { margin: 0; background: transparent; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; }
+    .l3 { position: absolute; left: 110px; bottom: 150px; display: flex; align-items: stretch; }
+    .l3.right { left: auto; right: 110px; }
+    .tag {
+      display: block; background: var(--accent); color: #1a1a18;
+      font: 700 34px/1 var(--ui); letter-spacing: 1.5px; padding: 26px 30px;
+      border-radius: 18px 0 0 18px; box-shadow: 6px 8px 0 rgba(26,26,24,.45);
+    }
+    .card {
+      display: block; background: #f1efe7; color: #1a1a18;
+      font: 700 44px/1 var(--ui); letter-spacing: .5px; padding: 22px 40px 24px;
+      border-radius: 0 18px 18px 0; box-shadow: 6px 8px 0 rgba(26,26,24,.45);
+    }
+    .sub { display: block; margin-top: 10px; color: #4a4a44; font: 700 24px/1 var(--ui); letter-spacing: 2px; }
+    .rule { position: absolute; left: 110px; bottom: 120px; height: 10px; width: 780px;
+      background: #c4d82e; border-radius: 6px; transform-origin: left center; }
+    .rule.right { left: auto; right: 110px; transform-origin: right center; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="lower3" data-start="0" data-width="1920" data-height="1080" data-duration="4">
+    <section id="l3-clip" class="clip" data-start="0" data-duration="4" data-track-index="1">
+      <div id="l3-wrap" class="l3">
+        <span id="l3-tag" class="tag"></span>
+        <span id="l3-card" class="card"><span id="l3-title"></span><span id="l3-sub" class="sub"></span></span>
+      </div>
+      <div id="l3-rule" class="rule"></div>
+    </section>
+  </div>
+  <script>
+    const V = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
+    const root = document.documentElement;
+    root.style.setProperty('--accent', V.accent || '#E5533D');
+    root.style.setProperty('--ui', '"Arial Rounded MT Bold", "Arial Rounded Bold", Arial, sans-serif');
+    document.getElementById('l3-tag').textContent = V.tag || 'SELF-HOSTED';
+    document.getElementById('l3-title').textContent = V.title || 'YOUR OWN RELAY SERVER';
+    document.getElementById('l3-sub').textContent = V.sub || '';
+    if ((V.side || 'left') === 'right') {
+      document.getElementById('l3-wrap').classList.add('right');
+      document.getElementById('l3-rule').classList.add('right');
+    }
+    const dir = (V.side || 'left') === 'right' ? 1 : -1;
+
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from('#l3-tag', { x: 420 * dir, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.1)
+      .from('#l3-card', { x: 520 * dir, opacity: 0, duration: 0.6, ease: 'power3.out' }, 0.22)
+      .from('#l3-rule', { scaleX: 0, duration: 0.5, ease: 'power2.out' }, 0.5)
+      .to('#l3-rule', { scaleX: 0, duration: 0.35, ease: 'power2.in' }, 3.25)
+      .to('#l3-card', { x: 520 * dir, opacity: 0, duration: 0.45, ease: 'power3.in' }, 3.35)
+      .to('#l3-tag', { x: 420 * dir, opacity: 0, duration: 0.45, ease: 'power3.in' }, 3.45);
+    window.__timelines['lower3'] = tl;
+  </script>
+</body>
+</html>

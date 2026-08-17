@@ -265,6 +265,69 @@ export async function runEditTests({ win, settings }) {
     return r;
   });
 
+  // ---------------------------------------------------------------- templates
+  await test('templates: both packs load with previews and presets', async () => {
+    const r = await js(`(async () => {
+      document.querySelector('#btnTemplates').click();
+      for (let i = 0; i < 30 && !document.querySelector('.tpl-card'); i++) await new Promise(r => setTimeout(r, 200));
+      const list = await window.editor.templates.list();
+      return { cards: document.querySelectorAll('.tpl-card').length,
+               list: list.map(t => ({ id: t.id, engine: t.engine, presets: t.overlays.length, preview: !!t.previewUrl })) };
+    })()`, true);
+    expect(r.cards >= 2, 'fewer than two templates rendered: ' + r.cards);
+    expect(r.list.every((t) => t.presets > 0), 'a template has no presets');
+    expect(r.list.every((t) => t.preview), 'a template has no preview image');
+    return r;
+  });
+
+  await test('templates: applying one rewrites the caption defaults, not the content', async () => {
+    const before = disk();
+    const r = await js(`(async () => {
+      const res = await window.editor.templates.apply('midnight-chalk');
+      await new Promise(r => setTimeout(r, 600));
+      return res;
+    })()`, true);
+    await settle();
+    const after = disk();
+    expect(r.ok === true, 'apply failed: ' + r.error);
+    expect(after.meta.template === 'midnight-chalk', 'meta.template not written');
+    expect(after.captions.defaults.highlight === '#F2B441', 'caption highlight not taken from the template');
+    expect(after.captions.cues.length === before.captions.cues.length, 'applying a template changed the captions themselves');
+    expect(after.scenes.length === before.scenes.length, 'applying a template changed the scenes');
+    // put the original template back
+    await js(`window.editor.templates.apply('coral-ink-bone')`);
+    await settle();
+    return { template: after.meta.template, highlight: after.captions.defaults.highlight };
+  });
+
+  await test('templates: rendering a preset produces an alpha clip on the timeline', async () => {
+    const before = (disk().overlays || []).length;
+    const r = await js(`(async () => {
+      const events = []; const off = window.editor.templates.onEvent(e => events.push(e));
+      const t0 = Date.now();
+      await window.editor.templates.renderPreset({ template: 'coral-ink-bone', preset: 'callout',
+        vars: { text: 'SELFTEST', corner: 'tr' }, fps: 30 });
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+          if (Date.now() - t0 > 600000) { clearInterval(iv); res({ type: 'timeout' }); }
+        }, 500);
+      });
+      off();
+      return { done, seconds: Math.round((Date.now() - t0) / 1000) };
+    })()`, true);
+    expect(r.done?.type === 'done', 'preset render failed: ' + JSON.stringify(r.done).slice(0, 200));
+
+    // the file must actually carry alpha, or compositing it is pointless
+    const { execFileSync } = await import('node:child_process');
+    const px = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=pix_fmt,codec_name', '-of', 'csv=p=0', r.done.path], { encoding: 'utf8' }).trim();
+    expect(/argb|rgba|yuva|4444/.test(px), 'the rendered preset has no alpha channel: ' + px);
+    return { seconds: r.seconds, pix: px, mb: +(r.done.bytes / 1e6).toFixed(2),
+             fromMb: +(r.done.originalBytes / 1e6).toFixed(2), duration: r.done.duration };
+  });
+
   // ---------------------------------------------------------------- transcription
   await test('transcribe: engines are detected and the panel opens', async () => {
     const r = await js(`(async () => {

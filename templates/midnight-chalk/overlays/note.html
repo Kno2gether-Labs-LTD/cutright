@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" data-composition-variables='[
+  {"id":"text","type":"string","label":"Note","default":"keep your data"},
+  {"id":"accent","type":"color","label":"Accent","default":"#6FD3A8"},
+  {"id":"side","type":"enum","label":"Side","default":"right","options":[{"value":"left","label":"Left"},{"value":"right","label":"Right"}]}
+]'>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Margin note — midnight chalk</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    body { margin: 0; background: transparent; }
+    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    .clip { position: absolute; inset: 0; }
+    .note { position: absolute; top: 300px; right: 120px; max-width: 460px; }
+    .note.left { right: auto; left: 120px; }
+    .txt { display: block; font: 400 44px/1.25 var(--hand); color: var(--accent);
+      text-shadow: 0 3px 18px rgba(0,0,0,.6); }
+    .arrow { position: absolute; left: -70px; top: 18px; width: 56px; height: 4px; background: var(--accent);
+      transform-origin: right center; opacity: .95; }
+    .arrow::after { content: ''; position: absolute; left: -2px; top: -7px; border-top: 9px solid transparent;
+      border-bottom: 9px solid transparent; border-right: 14px solid var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="chalknote" data-start="0" data-width="1920" data-height="1080" data-duration="3">
+    <section class="clip" data-start="0" data-duration="3" data-track-index="1">
+      <div id="nt-wrap" class="note">
+        <div id="nt-arrow" class="arrow"></div>
+        <span id="nt-text" class="txt"></span>
+      </div>
+    </section>
+  </div>
+  <script>
+    const V = (window.__hyperframes && window.__hyperframes.getVariables()) || {};
+    const root = document.documentElement;
+    root.style.setProperty('--accent', V.accent || '#6FD3A8');
+    root.style.setProperty('--hand', '"Bradley Hand", "Segoe Script", cursive');
+    document.getElementById('nt-text').textContent = V.text || '';
+    if (V.side === 'left') document.getElementById('nt-wrap').classList.add('left');
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    tl.from('#nt-arrow', { scaleX: 0, duration: 0.35, ease: 'power2.out' }, 0.05)
+      .from('#nt-text', { x: 26, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.22)
+      .to('#nt-text', { opacity: 0, duration: 0.4, ease: 'power2.in' }, 2.35)
+      .to('#nt-arrow', { scaleX: 0, duration: 0.3, ease: 'power2.in' }, 2.45);
+    window.__timelines['chalknote'] = tl;
+  </script>
+</body>
+</html>

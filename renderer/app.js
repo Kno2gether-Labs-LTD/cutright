@@ -264,6 +264,7 @@ function initTimelineInteraction() {
   $('#btnFit').onclick = () => { fitZoom(); renderTimeline(); $('#tlScroll').scrollLeft = 0; };
   $('#btnAutoCut').onclick = () => runAutoCut();
   $('#btnTranscribe').onclick = () => openTranscribePanel();
+  $('#btnTemplates').onclick = () => openTemplatesPanel();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -523,6 +524,122 @@ async function genAudio() {
   const r = await E.generateAudio({ kind, text, at });
   if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- templates
+// A template gives the project its look (caption defaults + scene style) and brings a set
+// of motion-graphics presets you can render straight onto the Overlays track.
+let tpl = { list: [], expanded: null, values: {}, busy: false };
+
+async function openTemplatesPanel() {
+  tpl.list = await E.templates.list();
+  renderTemplatesPanel();
+}
+
+function renderTemplatesPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'templates';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'templates';
+  title.append(kind);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const active = project?.meta?.template || project?.meta?.style;
+  const grid = document.createElement('div'); grid.className = 'tpl-grid';
+  tpl.list.forEach((t) => {
+    const card = document.createElement('div');
+    card.className = 'tpl-card' + (t.id === active ? ' active' : '');
+    const thumb = document.createElement('div'); thumb.className = 'thumb';
+    if (t.previewUrl) { const img = document.createElement('img'); img.src = t.previewUrl; thumb.appendChild(img); }
+    const sw = document.createElement('div'); sw.className = 'swatches';
+    Object.values(t.tokens || {}).filter((v) => typeof v === 'string' && v.startsWith('#')).slice(0, 5)
+      .forEach((c) => { const d = document.createElement('div'); d.className = 'sw'; d.style.background = c; sw.appendChild(d); });
+    thumb.appendChild(sw);
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = t.name;
+    const ds = document.createElement('div'); ds.className = 'ds'; ds.textContent = t.description || '';
+    const eng = document.createElement('div'); eng.className = 'eng';
+    eng.textContent = `${t.engine} · ${t.overlays.length} presets${t.builtin ? '' : ' · installed'}`;
+    meta.append(nm, ds, eng);
+    card.append(thumb, meta);
+    card.onclick = async () => {
+      const r = await E.templates.apply(t.id);
+      if (r.ok) { await loadProject(); setStatus(`Template “${t.name}” applied`, 'ok'); renderTemplatesPanel(); }
+      else setStatus('Could not apply template: ' + r.error, 'error');
+    };
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+  box.appendChild(hint('Applying a template sets the caption look and the scene style for this project. It does not touch your cuts, timings or text.'));
+
+  // presets of the active template
+  const cur = tpl.list.find((t) => t.id === active) || tpl.list[0];
+  if (cur) {
+    box.appendChild(sep());
+    box.appendChild(sechead(`Motion graphics — ${cur.name}`));
+    const list = document.createElement('div'); list.className = 'preset-list';
+    cur.overlays.forEach((preset) => {
+      const wrap = document.createElement('div'); wrap.className = 'preset';
+      const head = document.createElement('div'); head.className = 'ph';
+      const b = document.createElement('b'); b.textContent = preset.name;
+      const meta = document.createElement('span'); meta.className = 'dim'; meta.style.fontSize = '10.5px';
+      meta.textContent = `${preset.duration || 4}s`;
+      head.append(b, meta);
+      head.onclick = () => { tpl.expanded = tpl.expanded === preset.id ? null : preset.id; renderTemplatesPanel(); };
+      wrap.appendChild(head);
+
+      if (tpl.expanded === preset.id) {
+        const body = document.createElement('div'); body.className = 'pv';
+        const key = `${cur.id}:${preset.id}`;
+        tpl.values[key] = tpl.values[key] || Object.fromEntries((preset.vars || []).map((v) => [v.name, v.default ?? '']));
+        (preset.vars || []).forEach((v) => {
+          body.appendChild(field(v.label || v.name, tpl.values[key][v.name], (val) => { tpl.values[key][v.name] = val; }));
+        });
+        const go = btn(tpl.busy ? 'Rendering…' : 'Render & add to timeline',
+          () => insertPreset(cur, preset, tpl.values[key]), 'primary');
+        go.disabled = tpl.busy;
+        body.appendChild(btnRow(go));
+        wrap.appendChild(body);
+      }
+      list.appendChild(wrap);
+    });
+    box.appendChild(list);
+  }
+
+  box.appendChild(sep());
+  box.appendChild(btnRow(
+    btn('Open templates folder', () => E.templates.openFolder()),
+    btn('Reload', async () => { tpl.list = await E.templates.list(); renderTemplatesPanel(); }),
+  ));
+  box.appendChild(hint('Drop a template folder into that directory and hit Reload — that is how downloaded template packs install.'));
+}
+
+async function insertPreset(template, preset, vars) {
+  if (tpl.busy) return;
+  tpl.busy = true; renderTemplatesPanel();
+  setStatus(`Rendering “${preset.name}”…`, 'working');
+  const off = E.templates.onEvent(async (m) => {
+    if (m.type === 'progress') setStatus(`Rendering “${preset.name}” — ${m.detail || ''}`.slice(0, 90), 'working');
+    if (m.type === 'error') { tpl.busy = false; off(); setStatus('Preset render failed: ' + String(m.error).slice(0, 120), 'error'); renderTemplatesPanel(); }
+    if (m.type === 'done') {
+      tpl.busy = false; off();
+      const rel = m.path.startsWith(WORK + '/') ? m.path.slice(WORK.length + 1) : m.path;
+      project.overlays = project.overlays || [];
+      project.overlays.push({
+        id: `${preset.id}-${Date.now()}`, src: rel,
+        start: +(video.currentTime || 0).toFixed(2), dur: m.duration || preset.duration || 4,
+        x: 0, y: 0, template: template.id, preset: preset.id, vars,
+      });
+      save(); renderTimeline();
+      setStatus(`“${preset.name}” added at ${fmt(video.currentTime || 0)}`, 'ok');
+      select('overlay', project.overlays.length - 1);
+    }
+  });
+  const r = await E.templates.renderPreset({ template: template.id, preset: preset.id, vars, fps: fps });
+  if (r?.error) { tpl.busy = false; off(); setStatus('Preset render failed: ' + r.error, 'error'); renderTemplatesPanel(); }
 }
 
 // ---------------------------------------------------------------- transcription
@@ -808,6 +925,7 @@ function initKeys() {
       case '-': case '_': setZoom(zoom / 1.5); break;
       case 'f': case 'F': fitZoom(); renderTimeline(); break;
       case 'a': case 'A': runAutoCut(); break;
+      case 't': case 'T': openTemplatesPanel(); break;
       case 'p': case 'P': $('#btnPreview').click(); break;
       case 'e': case 'E': $('#btnExport').click(); break;
       default: return;
