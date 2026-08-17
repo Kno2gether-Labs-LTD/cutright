@@ -6,32 +6,73 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  build:
+  checks:
+    name: Static checks
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm }
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild
-
+      - run: npm ci
       - name: Syntax check every source file
         run: |
+          set -e
           for f in electron/*.js electron/*.cjs electron/*.mjs renderer/app.js scripts/*.mjs; do
-            node --check "$f" || exit 1
+            node --check "$f"
           done
           python3 -m py_compile engine/*.py
+      - name: Licence guard — no bundled ffmpeg
+        run: node scripts/check-licence-posture.mjs
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit reported findings"
 
-      - name: Build (unsigned)
-        run: npm run pack
+  test:
+    name: App test suite
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild
+      - name: Install ffmpeg + Pillow
+        run: |
+          brew install ffmpeg
+          python3 -m pip install --break-system-packages --user Pillow || python3 -m pip install --user Pillow
+      - name: Build a synthetic test project
+        run: node scripts/make-test-workspace.mjs /tmp/cutright-test-ws
+      - name: Run the suite (core tags — no network, no model downloads)
+        run: npm run vendor && WORK=/tmp/cutright-test-ws CVE_TEST_TAGS=core CVE_SMOKE=ui,edit CVE_SMOKE_OUT=./out/ci electron . --user-data-dir=/tmp/ci-profile
+      - name: Publish the result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: out/
+          retention-days: 14
+
+  build:
+    name: Package (unsigned)
+    runs-on: macos-14
+    needs: [checks]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run rebuild
+      - run: npm run pack
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
       - uses: actions/upload-artifact@v4
         with:
           name: Cutright-mac-arm64

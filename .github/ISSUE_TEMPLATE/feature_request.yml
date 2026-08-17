@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest something Cutright should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The editing problem
+      description: What are you trying to do, and what does it cost you today (minutes per video)?
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Checked the roadmap?
+      options:
+        - label: I read docs/ROADMAP.md and this is not already listed

@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        patterns: ["electron-builder", "@electron/*"]
+    ignore:
+      # Electron majors change the native ABI and the security model — upgrade deliberately,
+      # with a full `npm run smoke` and a packaged-build check, never automatically.
+      - dependency-name: electron
+        update-types: [version-update:semver-major]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: monthly }

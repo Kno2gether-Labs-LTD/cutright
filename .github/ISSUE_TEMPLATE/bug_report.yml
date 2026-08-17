@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in the app behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problem? Do not file it here — see [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations: { required: true }
+  - type: textarea
+    id: log
+    attributes:
+      label: App log
+      description: "Help → Open Log Folder, then paste the tail of main.log. Redact any paths you'd rather not share."
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Cutright version
+      placeholder: "0.1.0"
+    validations: { required: true }
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS (Apple Silicon), macOS (Intel), Windows, Linux]
+    validations: { required: true }
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment check
+      description: "Paste the output of Help → Check Environment… (ffmpeg, python, Pillow, engine)."
