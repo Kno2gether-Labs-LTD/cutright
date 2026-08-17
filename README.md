@@ -1,5 +1,8 @@
 # Cutright
 
+[![CI](https://github.com/Kno2gether-Labs-LTD/cutright/actions/workflows/ci.yml/badge.svg)](https://github.com/Kno2gether-Labs-LTD/cutright/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+
 An **agent-driven desktop video editor**. The edit is data — one `project.json` that both you
 and an AI agent read and write — and the render is a deterministic function of it. Run
 `claude` in the side terminal and it edits the same timeline you're looking at.
