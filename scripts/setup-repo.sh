@@ -1,7 +1,7 @@
 #!/bin/bash
 # Create and harden the public GitHub repository. Idempotent — safe to re-run.
 #
-#   gh auth login                                  # once, as the account that owns the org
+#   ./scripts/gh-account.sh login                  # sign in as the account that owns the org
 #   ./scripts/setup-repo.sh kno2gether-labs        # org (or your username)
 #   ./scripts/setup-repo.sh kno2gether-labs --private     # start private, flip later
 #
@@ -10,6 +10,11 @@
 # behind CI + review. Everything it applies is printed so nothing happens invisibly.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Use this project's own GitHub account when one has been set up
+# (./scripts/gh-account.sh login), otherwise fall back to the machine default.
+PROJECT_GH="${CUTRIGHT_GH_CONFIG:-$HOME/.config/gh-cutright}"
+[ -d "$PROJECT_GH" ] && export GH_CONFIG_DIR="$PROJECT_GH"
 
 OWNER="${1:-}"
 VISIBILITY="public"
@@ -22,7 +27,7 @@ if [ -z "$OWNER" ]; then
   exit 1
 fi
 command -v gh >/dev/null || { echo "gh CLI not installed: brew install gh"; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo "not authenticated: gh auth login"; exit 1; }
+gh auth status >/dev/null 2>&1 || { echo "not authenticated — run: ./scripts/gh-account.sh login"; exit 1; }
 
 WHO=$(gh api user --jq .login)
 echo "Authenticated as: $WHO"

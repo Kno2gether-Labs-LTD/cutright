@@ -3,6 +3,11 @@
 #   ./scripts/release.sh v0.1.0 [--signed]
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Use this project's own GitHub account when one has been set up
+# (./scripts/gh-account.sh login), otherwise fall back to the machine default.
+PROJECT_GH="${CUTRIGHT_GH_CONFIG:-$HOME/.config/gh-cutright}"
+[ -d "$PROJECT_GH" ] && export GH_CONFIG_DIR="$PROJECT_GH"
 TAG="${1:?usage: ./scripts/release.sh v0.1.0 [--signed]}"
 MODE="${2:-}"
 
