@@ -110,11 +110,14 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
                  stages: [...new Set(events.filter(e=>e.type==='progress').map(e=>e.stage))] };
       })()`, true);
       const p = JSON.parse(readFileSync(settings.work + '/project.json', 'utf8'));
+      // a transition at a seam blends the two sides, so it also shortens the export
       const cutTotal = (p.cuts || []).reduce((a, c) => a + (c.end - c.start), 0);
-      const expected = p.meta.duration - cutTotal;
+      const xfadeTotal = (p.cuts || []).reduce((a, c) =>
+        a + (c.transition && c.transition !== 'none' ? Number(c.tdur ?? 0.3) : 0), 0);
+      const expected = p.meta.duration - cutTotal - xfadeTotal;
       const got = parseFloat(r.done?.result?.duration || 0);
       check('export', { ...r, expectedDuration: +expected.toFixed(2), gotDuration: got,
-        rippleExact: Math.abs(got - expected) < 0.1,
+        rippleExact: Math.abs(got - expected) < 0.1, cutSeconds: +cutTotal.toFixed(2), transitionSeconds: +xfadeTotal.toFixed(2),
         captions: r.done?.result?.captions, scenes: r.done?.result?.scenes, cuts: r.done?.result?.cuts_applied });
     }
 

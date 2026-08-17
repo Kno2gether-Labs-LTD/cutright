@@ -13,6 +13,10 @@ import { Readable } from 'node:stream';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
+// Anything a child process must *read from disk* (the Python engine, template folders we
+// spawn npx in) has to come from app.asar.unpacked — an asar archive is a file, so using a
+// path inside it as a cwd fails with ENOTDIR. Both are listed in build.asarUnpack.
+const RES = app.isPackaged ? ROOT.replace(/app\.asar(?![.])/, 'app.asar.unpacked') : ROOT;
 const isDev = !app.isPackaged;
 
 // ---------------------------------------------------------------- logging
@@ -61,7 +65,7 @@ const DEFAULTS = {
   recent: [],
   // The render engine ships with the app (engine/). The video-edit skill keeps its own
   // copy for standalone use; ENGINE= overrides both.
-  engine: process.env.ENGINE || join(ROOT, 'engine'),
+  engine: process.env.ENGINE || join(RES, 'engine'),
   python: process.env.PYTHON || 'python3',
 };
 let settingsPath = null, settings = { ...DEFAULTS };
@@ -73,6 +77,10 @@ function loadSettings() {
   if (argWork) settings.work = argWork.split('=')[1];
   if (process.env.WORK) settings.work = process.env.WORK;   // env always wins (dev/smoke)
   if (!Array.isArray(settings.recent)) settings.recent = [];
+  // a settings file written by an older build can point the engine somewhere that is gone
+  if (!settings.engine || !existsSync(join(settings.engine, 'render_project.py'))) {
+    settings.engine = DEFAULTS.engine;
+  }
 }
 
 // Remember where the user has been working; the welcome screen offers these.
@@ -320,7 +328,7 @@ async function checkEnvironment() {
 // the ones bundled with the app, and the user's own — the user's win on an id clash, so
 // a downloaded template can supersede a built-in one.
 function templateDirs() {
-  return [join(app.getPath('userData'), 'templates'), join(ROOT, 'templates')];
+  return [join(app.getPath('userData'), 'templates'), join(RES, 'templates')];
 }
 function listTemplates() {
   const found = new Map();
