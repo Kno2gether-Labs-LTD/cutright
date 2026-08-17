@@ -1,6 +1,6 @@
 # Docs — Claude Video Editor (Electron plan)
 
-Planning set for the parallel dev session that builds the distributable Electron app. Read in order:
+The design documents Cutright was built from. Read in order:
 
 1. **[REQUIREMENTS.md](REQUIREMENTS.md)** — vision, users, principles, functional + non-functional
    requirements (multi-track timeline, story-aware auto SFX/music, AI media generation, agent panel,
