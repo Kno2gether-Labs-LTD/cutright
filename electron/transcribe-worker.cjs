@@ -163,6 +163,11 @@ async function transcribe(job) {
   const media = job.media.startsWith('/') ? job.media : join(job.work, job.media);
   if (!existsSync(media)) throw new Error('media not found: ' + media);
 
+  // Back up the existing transcript FIRST: some engines (hyperframes) write
+  // transcript.json themselves, so a copy taken afterwards would back up the new file.
+  const tPath = join(job.work, 'transcript.json');
+  if (existsSync(tPath)) { try { copyFileSync(tPath, join(job.work, 'transcript.prev.json')); } catch {} }
+
   const remote = job.engine === 'openai' || job.engine === 'elevenlabs';
   progress('extracting', 'pulling a mono 16 kHz track out of the video');
   const audio = await extractAudio(media, join(job.work, remote ? '.cve_stt.m4a' : '.cve_stt.wav'), remote);
@@ -179,9 +184,6 @@ async function transcribe(job) {
     try { unlinkSync(audio); } catch {}
   }
 
-  // keep the previous transcript — a bad re-transcribe should never lose the old one
-  const tPath = join(job.work, 'transcript.json');
-  if (existsSync(tPath)) { try { copyFileSync(tPath, join(job.work, 'transcript.prev.json')); } catch {} }
   writeFileSync(tPath, JSON.stringify(words, null, 1));
   progress('writing', `${words.length} words`);
 
