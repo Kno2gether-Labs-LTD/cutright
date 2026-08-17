@@ -108,11 +108,77 @@
   <div class="wbox">
     <img src="logo.png" alt="" class="wlogo">
     <h1>Cutwright</h1>
-    <p>Open a <b>workspace</b> — the folder holding <code>project.json</code>, <code>graded_master.mp4</code> and your renders.</p>
-    <button id="wOpen" class="primary">Open Workspace…</button>
+    <p class="wlede">Start from a recording, or reopen a project you already made.</p>
+
+    <div class="wchoices">
+      <button id="wNew" class="wchoice primary">
+        <span class="wc-title">Start from a video…</span>
+        <span class="wc-sub">Pick a recording — Cutwright builds the master, transcribes it and opens the timeline</span>
+      </button>
+      <button id="wOpen" class="wchoice">
+        <span class="wc-title">Open an existing project…</span>
+        <span class="wc-sub">A folder that already contains project.json</span>
+      </button>
+    </div>
+
     <div id="wRecent" class="wrecent"></div>
-    <p class="wsmall">No workspace yet? Run <code>claude</code> in a folder with a raw recording and ask it to
-      “edit this video end to end” — the <code>video-edit</code> skill writes the workspace this app opens.</p>
+    <p class="wsmall">A <b>project folder</b> holds <code>project.json</code> (the edit),
+      <code>graded_master.mp4</code> (the picture) and your exports. It is a plain folder — you can
+      move it, back it up, or hand it to <code>claude</code> in the terminal.</p>
+  </div>
+</div>
+
+<div id="newproj" class="modal" hidden>
+  <div class="mbox">
+    <h2>Start from a video</h2>
+    <div class="field">
+      <label>Recording</label>
+      <div class="pickrow"><span id="npSource" class="pathbox">No video chosen</span>
+        <button id="npPickVideo">Choose video…</button></div>
+    </div>
+    <div class="field">
+      <label>Project folder — this is created for you</label>
+      <div class="pickrow"><span id="npDest" class="pathbox">—</span>
+        <button id="npPickDest">Change…</button></div>
+    </div>
+    <div class="field">
+      <label>Match the colour of another video (optional)</label>
+      <div class="pickrow"><span id="npRef" class="pathbox">None — keep the original look</span>
+        <button id="npPickRef">Choose…</button><button id="npClearRef">Clear</button></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Transcribe (captions + auto-cut + transcript editing)</label>
+        <select id="npModel">
+          <option value="small.en">Yes — accurate (small.en)</option>
+          <option value="tiny.en">Yes — fastest (tiny.en)</option>
+          <option value="">No, skip transcription</option>
+        </select></div>
+    </div>
+    <div id="npProgress" class="np-progress" hidden>
+      <div class="np-bar"><div id="npBar"></div></div>
+      <div id="npStage" class="np-stage">Starting…</div>
+    </div>
+    <div class="btnrow mactions">
+      <button id="npCancel">Cancel</button>
+      <button id="npGo" class="primary">Create project</button>
+    </div>
+    <p class="hint">Takes about as long as the video itself: the master is hardware-encoded and
+      transcription runs locally, so nothing is uploaded.</p>
+  </div>
+</div>
+
+<div id="tour" class="tour" hidden>
+  <div id="tourSpot" class="tour-spot"></div>
+  <div id="tourCard" class="tour-card">
+    <div class="tour-step"><span id="tourN">1</span> of <span id="tourTotal">8</span></div>
+    <h3 id="tourTitle">Welcome</h3>
+    <p id="tourBody"></p>
+    <div class="tour-actions">
+      <button id="tourSkip">Skip</button>
+      <span class="spacer"></span>
+      <button id="tourPrev">Back</button>
+      <button id="tourNext" class="primary">Next</button>
+    </div>
   </div>
 </div>
 

@@ -3,7 +3,8 @@
 //
 // Every feature the pre-Electron web app had is covered here, plus the ones Phase 0 added.
 // Run: CVE_SMOKE=ui,edit npm run smoke
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -276,6 +277,135 @@ export async function runEditTests({ win, settings }) {
     })()`);
     expect(r.w1 > r.w0 + 40, `rail did not widen: ${JSON.stringify(r)}`);
     return r;
+  });
+
+  // ---------------------------------------------------------------- onboarding
+  await test('onboarding: the guided tour spotlights real elements', async () => {
+    const r = await js(`(async () => {
+      localStorage.removeItem('cutwright.tourSeen');
+      startTour(true);
+      await new Promise(r => setTimeout(r, 400));
+      const seen = [];
+      for (let i = 0; i < 12; i++) {
+        const card = document.querySelector('#tourCard');
+        const spot = document.querySelector('#tourSpot').getBoundingClientRect();
+        const visible = !document.querySelector('#tour').hidden;
+        if (!visible) break;
+        seen.push({ title: document.querySelector('#tourTitle').textContent,
+                    w: Math.round(spot.width), h: Math.round(spot.height),
+                    onScreen: spot.left > -50 && spot.top > -50 && spot.right < innerWidth + 50 });
+        document.querySelector('#tourNext').click();
+        await new Promise(r => setTimeout(r, 250));
+      }
+      const finished = document.querySelector('#tour').hidden;
+      const remembered = localStorage.getItem('cutwright.tourSeen');
+      return { seen, finished, remembered };
+    })()`, true);
+    expect(r.seen.length >= 6, 'the tour showed too few steps: ' + r.seen.length);
+    expect(r.seen.every((s) => s.w > 10 && s.h > 10), 'a tour step spotlighted nothing: ' + JSON.stringify(r.seen));
+    expect(r.seen.every((s) => s.onScreen), 'a tour step pointed off screen: ' + JSON.stringify(r.seen));
+    expect(r.finished === true, 'the tour did not close at the end');
+    expect(r.remembered === '1', 'the tour will show again on next launch');
+    return { steps: r.seen.length, titles: r.seen.map((s) => s.title) };
+  });
+
+  await test('onboarding: the empty inspector offers the four ways in', async () => {
+    const r = await js(`(() => {
+      window.__cve && (document.querySelector('#tlScroll').click());
+      const labels = [...document.querySelectorAll('#inspector button')].map(b => b.textContent);
+      return { labels };
+    })()`, true);
+    for (const want of ['Edit by transcript', 'Find cuts for me', 'Templates', 'Look', 'Show me around']) {
+      expect(r.labels.includes(want), `the empty state is missing "${want}": ${r.labels.join(', ')}`);
+    }
+    return r;
+  });
+
+  await test('onboarding: the project switcher lists new / open / recents', async () => {
+    const r = await js(`(async () => {
+      document.querySelector('#btnWorkspace').click();
+      await new Promise(r => setTimeout(r, 400));
+      return { kind: document.querySelector('#inspector .kind')?.textContent,
+               labels: [...document.querySelectorAll('#inspector button')].map(b => b.textContent) };
+    })()`, true);
+    expect(r.kind === 'project', 'the project switcher did not open: ' + r.kind);
+    expect(r.labels.some((l) => /Start from a video/.test(l)), 'no way to start a new project');
+    expect(r.labels.some((l) => /Open another project/.test(l)), 'no way to open another project');
+    return r;
+  });
+
+  await test('onboarding: the new-project dialog validates before it runs', async () => {
+    const r = await js(`(async () => {
+      openNewProject();
+      await new Promise(r => setTimeout(r, 300));
+      const visible = !document.querySelector('#newproj').hidden;
+      const goDisabled = document.querySelector('#npGo').disabled;
+      // fake a chosen video + destination without touching the file dialogs
+      np.source = '/tmp/does-not-exist.mov'; np.dest = '/tmp/cve-np-test'; paintNewProject();
+      const goEnabled = !document.querySelector('#npGo').disabled;
+      const shown = document.querySelector('#npSource').textContent;
+      document.querySelector('#npCancel').click();
+      await new Promise(r => setTimeout(r, 200));
+      return { visible, goDisabled, goEnabled, shown, closed: document.querySelector('#newproj').hidden };
+    })()`, true);
+    expect(r.visible, 'the new-project dialog did not open');
+    expect(r.goDisabled, 'Create was enabled with nothing chosen');
+    expect(r.goEnabled, 'Create stayed disabled after choosing a video and folder');
+    expect(r.closed, 'Cancel did not close the dialog');
+    return r;
+  });
+
+  await test('onboarding: a raw video becomes a working project folder', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { rmSync, mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const src = join(tmpdir(), 'cve_newproj_src.mov');
+    const dest = join(mkdtempSync(join(tmpdir(), 'cve-np-')), 'clip_edit');
+    // a real 18s recording to feed the pipeline (trimmed from the workspace master)
+    execFileSync('ffmpeg', ['-hide_banner', '-y', '-ss', '0', '-t', '18', '-i',
+      join(settings.work, 'graded_master.mp4'), '-c:v', 'h264_videotoolbox', '-b:v', '6M',
+      '-c:a', 'aac', src], { stdio: 'ignore' });
+
+    const r = await js(`(async () => {
+      const events = []; const off = window.editor.newProject.onEvent(e => events.push(e));
+      const t0 = Date.now();
+      const started = await window.editor.newProject.create({
+        source: ${JSON.stringify(src)}, dest: ${JSON.stringify(dest)},
+        transcribe: true, model: 'tiny.en',
+      });
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+          if (Date.now() - t0 > 900000) { clearInterval(iv); res({ type: 'timeout' }); }
+        }, 500);
+      });
+      off();
+      return { started, done, seconds: Math.round((Date.now() - t0) / 1000),
+               stages: [...new Set(events.filter(e => e.type === 'progress').map(e => e.stage))],
+               maxPct: Math.max(0, ...events.filter(e => e.type === 'progress').map(e => e.pct || 0)) };
+    })()`, true);
+
+    expect(r.done?.type === 'done', 'project creation failed: ' + JSON.stringify(r.done).slice(0, 250));
+    for (const f of ['project.json', 'graded_master.mp4', 'transcript.json']) {
+      expect(existsSync(join(dest, f)), `the new project is missing ${f}`);
+    }
+    const p = JSON.parse(readFileSync(join(dest, 'project.json'), 'utf8'));
+    expect(p.meta?.width === 1920 && p.meta?.height === 1080, 'the master was not normalised to 1080p: ' + JSON.stringify(p.meta));
+    expect(p.meta?.fps === 30, 'the master is not 30fps: ' + p.meta?.fps);
+    expect(p.captions?.cues?.length > 5, 'no captions were built: ' + p.captions?.cues?.length);
+    expect(p.captions.cues.every((c) => c.tokens?.length && c.end >= c.start), 'malformed cues');
+    expect(Math.abs(p.meta.duration - 18) < 1.5, 'duration is wrong: ' + p.meta.duration);
+    expect(r.stages.includes('probe') && r.stages.includes('grade') && r.stages.includes('transcribe')
+      && r.stages.includes('build'), 'stages missing: ' + r.stages.join(','));
+
+    const out = { seconds: r.seconds, cues: p.captions.cues.length, duration: p.meta.duration,
+                  stages: r.stages, sample: p.captions.cues[0].tokens.map((t) => t.t).join(' ') };
+    // the app adopted the new folder — put the test workspace back before anything else runs
+    await js(`window.editor.newProject.adopt(${JSON.stringify(settings.work)})`);
+    await wait(600);
+    try { rmSync(dest, { recursive: true, force: true }); rmSync(src, { force: true }); } catch {}
+    return out;
   });
 
   // ---------------------------------------------------------------- transcript editing

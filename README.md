@@ -36,6 +36,11 @@ remotely with a key stored in the OS keychain. Rebuilds the captions from the ne
 **The agent.** `claude` runs in the terminal with the workspace as its working directory. When it
 edits `project.json`, the UI reloads — without clobbering an edit you're in the middle of.
 
+**New here?** Read [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — it explains the one
+concept that matters (a project is a folder), how to start an edit from a raw recording, and the
+four things worth trying first. The app shows a guided tour on first launch
+(**Help → Show Me Around** replays it).
+
 ## Run it
 
 ```bash
@@ -45,10 +50,9 @@ npm run rebuild                  # node-pty against Electron's ABI (once per Ele
 npm run dev                      # or: WORK=/path/to/workspace npm run dev
 ```
 
-A **workspace** is a folder containing `project.json`, `graded_master.mp4` and your renders.
-First launch asks for one (File → Open Workspace…, `⌘O`). To make one from a raw recording, run
-`claude` in a folder with the footage and ask it to "edit this video end to end" — the
-`video-edit` skill produces exactly this layout.
+First launch offers two ways in: **Start from a video…** (pick a recording — Cutwright builds the
+1080p master, transcribes it locally and opens the timeline) or **Open an existing project…**.
+The folder chip in the top-left is the project switcher afterwards.
 
 ### Requirements
 - **ffmpeg + ffprobe** — `brew install ffmpeg` (macOS) or `winget install ffmpeg` (Windows)

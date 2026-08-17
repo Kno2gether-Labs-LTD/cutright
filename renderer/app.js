@@ -40,11 +40,53 @@ async function boot() {
     WORK = w; $('#work').textContent = w.replace(/^.*\//, ''); sel = null;
     await loadProject(); loadVideo('FINAL.mp4');
   });
-  $('#btnWorkspace').onclick = () => E.chooseWorkspace();
+  initNewProject();
+  initTour();
+  $('#btnWorkspace').onclick = () => openProjectMenu();
+}
+
+// The header chip is the project switcher: new, open, recent, reveal in Finder.
+async function openProjectMenu() {
+  const cfg = await E.config();
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'project';
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'project';
+  title.append(kind);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const cur = document.createElement('div'); cur.className = 'ac-summary';
+  cur.textContent = cfg.work || 'no folder open';
+  box.appendChild(cur);
+
+  box.appendChild(btnRow(
+    btn('Start from a video…', () => openNewProject(), 'primary'),
+    btn('Open another project…', () => E.chooseWorkspace().then((r) => r?.ok && location.reload())),
+    btn('Reveal in Finder', () => E.revealInFolder('project.json')),
+  ));
+
+  if ((cfg.recent || []).length > 1) {
+    box.appendChild(sep());
+    box.appendChild(sechead('Recent projects'));
+    const list = document.createElement('div'); list.className = 'wrecent';
+    cfg.recent.filter((d) => d !== cfg.work).forEach((dir) => {
+      const b = btn(dir.replace(/^.*\//, '') + '  —  ' + dir, async () => {
+        const r = await E.openWorkspace(dir);
+        if (r?.ok) location.reload(); else setStatus(r?.error || 'could not open that folder', 'error');
+      });
+      list.appendChild(b);
+    });
+    box.appendChild(list);
+  }
+  box.appendChild(hint('A project is just a folder. Everything the editor knows about your video lives in project.json inside it.'));
 }
 
 function showWelcome(cfg) {
   $('#welcome').hidden = false;
+  initNewProject();
+  $('#wNew').onclick = () => openNewProject();
   $('#wOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
   const box = $('#wRecent'); box.innerHTML = '';
   (cfg.recent || []).forEach((dir) => {
@@ -334,7 +376,21 @@ function renderInspector() {
   const e = elemOf(sel);
   $('#selBadge').textContent = e ? `${sel.kind} · ${fmt(e.start || 0)}` : 'nothing selected';
   if (!e) {
-    box.innerHTML = '<div class="empty">Select a scene, caption, cut, overlay or audio layer on the timeline.</div>';
+    box.innerHTML = '';
+    const empty = document.createElement('div'); empty.className = 'empty';
+    empty.innerHTML = 'Nothing selected. Click anything on the timeline to edit it — or start here:';
+    box.appendChild(empty);
+    box.appendChild(btnRow(
+      btn('Edit by transcript', () => openTranscriptEditor(), 'primary'),
+      btn('Find cuts for me', () => runAutoCut()),
+      btn('Templates', () => openTemplatesPanel()),
+      btn('Look', () => openLookPanel()),
+    ));
+    box.appendChild(btnRow(
+      btn('Start a new project from a video…', () => openNewProject()),
+      btn('Show me around', () => startTour(true)),
+    ));
+    box.appendChild(hint('Tip: run claude in the terminal below and ask for an edit in plain English — it changes the same project you are looking at.'));
     return;
   }
 
@@ -550,6 +606,184 @@ async function genAudio() {
   const r = await E.generateAudio({ kind, text, at });
   if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- guided tour
+// Shown once, replayable from Help. Each step spotlights a real element, so the tour can
+// never drift from the UI: if the selector stops matching, the step is skipped.
+const TOUR_STEPS = [
+  { el: '#btnWorkspace', title: 'This is your project',
+    body: 'The chip shows the folder you are editing. Click it any time to start a new project from a video, open another one, or jump back to a recent project.' },
+  { el: '#tlHeads', title: 'Everything is a track',
+    body: 'Scenes, overlays, captions, cuts and audio. Click anything on a track to edit it on the right. The small buttons in each track header add to that track.' },
+  { el: '#btnTranscriptEdit', title: 'Edit by reading',
+    body: 'Open the transcript, select a sentence you want gone and press Delete — the video is cut there and every caption, scene and overlay after it moves up automatically.' },
+  { el: '#btnAutoCut', title: 'Let it find the dead air',
+    body: 'Auto-cut listens to the audio for silences and reads the transcript for “um”s and stutters, then proposes cuts. Click any proposal to hear it before you accept.' },
+  { el: '#btnTemplates', title: 'Looks and motion graphics',
+    body: 'A template sets the caption style and brings lower thirds, title cards and callouts. Fill in your text and it renders straight onto the Overlays track.' },
+  { el: '#btnLook', title: 'Grade and polish',
+    body: 'Film, warm, teal & orange, noir… plus grain and vignette, and a voice polish for the audio. Applied when rendering, so your master is never touched.' },
+  { el: '.term', title: 'The agent works here',
+    body: 'Run <code>claude</code> and ask for what you want — “cut the rambling in the middle”, “add a lower third when I say relay”. It edits the same project you are looking at, and the timeline updates live.' },
+  { el: '#btnExport', title: 'Preview, then export',
+    body: 'Preview section renders just the part you are looking at (seconds). Export renders the whole video with every cut, caption, scene, overlay and look applied.' },
+];
+
+let tour = { i: 0, active: false };
+
+function startTour(fromStart = true) {
+  if (!project) return;
+  tour.i = fromStart ? 0 : tour.i;
+  tour.active = true;
+  $('#tour').hidden = false;
+  $('#tourTotal').textContent = String(TOUR_STEPS.length);
+  paintTour();
+}
+function endTour() {
+  tour.active = false;
+  $('#tour').hidden = true;
+  try { localStorage.setItem('cutwright.tourSeen', '1'); } catch {}
+}
+function stepTour(d) {
+  const next = tour.i + d;
+  if (next < 0) return;
+  if (next >= TOUR_STEPS.length) return endTour();
+  tour.i = next; paintTour();
+}
+
+function paintTour() {
+  const step = TOUR_STEPS[tour.i];
+  const el = document.querySelector(step.el);
+  if (!el) return stepTour(1);                 // the UI moved on; skip rather than lie
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const spot = $('#tourSpot');
+  spot.style.left = (r.left - pad) + 'px';
+  spot.style.top = (r.top - pad) + 'px';
+  spot.style.width = (r.width + pad * 2) + 'px';
+  spot.style.height = (r.height + pad * 2) + 'px';
+
+  $('#tourN').textContent = String(tour.i + 1);
+  $('#tourTitle').textContent = step.title;
+  $('#tourBody').innerHTML = step.body;
+
+  const card = $('#tourCard');
+  const cw = 340, ch = card.offsetHeight || 190;
+  let left = r.left + r.width / 2 - cw / 2;
+  let top = r.bottom + 16;
+  if (top + ch > window.innerHeight - 12) top = Math.max(12, r.top - ch - 16);
+  card.style.left = clamp(left, 12, window.innerWidth - cw - 12) + 'px';
+  card.style.top = clamp(top, 12, window.innerHeight - ch - 12) + 'px';
+  $('#tourPrev').disabled = tour.i === 0;
+  $('#tourNext').textContent = tour.i === TOUR_STEPS.length - 1 ? 'Done' : 'Next';
+}
+
+function initTour() {
+  $('#tourNext').onclick = () => stepTour(1);
+  $('#tourPrev').onclick = () => stepTour(-1);
+  $('#tourSkip').onclick = endTour;
+  window.addEventListener('resize', () => { if (tour.active) paintTour(); });
+  document.addEventListener('keydown', (ev) => {
+    if (!tour.active) return;
+    if (ev.key === 'Escape') { ev.preventDefault(); endTour(); }
+    if (ev.key === 'ArrowRight' || ev.key === 'Enter') { ev.preventDefault(); stepTour(1); }
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); stepTour(-1); }
+  }, true);
+  E.onShowTour?.(() => startTour(true));
+  let seen = false;
+  try { seen = localStorage.getItem('cutwright.tourSeen') === '1'; } catch {}
+  if (!seen) setTimeout(() => startTour(true), 900);
+}
+
+// ---------------------------------------------------------------- new project
+// Raw recording in, workspace out. This is the only entry point that does not assume
+// someone already prepared a project folder.
+let np = { source: '', dest: '', ref: '', busy: false };
+
+function openNewProject() {
+  np.busy = false;
+  $('#newproj').hidden = false;
+  $('#npProgress').hidden = true;
+  $('#npBar').style.width = '0%';
+  $('#npGo').disabled = false;
+  paintNewProject();
+}
+function closeNewProject() { if (!np.busy) $('#newproj').hidden = true; }
+
+function paintNewProject() {
+  const set = (id, val, placeholder) => {
+    const el = $(id);
+    el.textContent = val || placeholder;
+    el.classList.toggle('set', !!val);
+    el.title = val || '';
+  };
+  set('#npSource', np.source, 'No video chosen');
+  set('#npDest', np.dest, '—');
+  set('#npRef', np.ref, 'None — keep the original look');
+  $('#npGo').disabled = np.busy || !np.source || !np.dest;
+}
+
+function initNewProject() {
+  $('#npPickVideo').onclick = async () => {
+    const r = await E.newProject.pickVideo();
+    if (!r?.ok) return;
+    np.source = r.source;
+    if (!np.dest) np.dest = r.suggestedDest;
+    paintNewProject();
+  };
+  $('#npPickDest').onclick = async () => {
+    const r = await E.newProject.pickFolder({ defaultPath: np.dest, title: 'Where should the project go?' });
+    if (r?.ok) { np.dest = r.dir; paintNewProject(); }
+  };
+  $('#npPickRef').onclick = async () => {
+    const r = await E.newProject.pickVideo();
+    if (r?.ok) { np.ref = r.source; paintNewProject(); }
+  };
+  $('#npClearRef').onclick = () => { np.ref = ''; paintNewProject(); };
+  $('#npCancel').onclick = closeNewProject;
+  $('#npGo').onclick = runNewProject;
+  $('#newproj').addEventListener('click', (ev) => { if (ev.target.id === 'newproj') closeNewProject(); });
+}
+
+async function runNewProject() {
+  if (np.busy || !np.source || !np.dest) return;
+  np.busy = true;
+  $('#npGo').disabled = true;
+  $('#npProgress').hidden = false;
+  $('#npStage').textContent = 'Starting…';
+
+  const model = $('#npModel').value;
+  const off = E.newProject.onEvent(async (m) => {
+    if (m.type === 'progress') {
+      $('#npBar').style.width = Math.max(2, Math.round(m.pct || 0)) + '%';
+      $('#npStage').textContent = `${m.stage}: ${m.detail || ''}`;
+      setStatus(`Building project — ${m.stage}`, 'working');
+    }
+    if (m.type === 'error') {
+      np.busy = false; off();
+      $('#npGo').disabled = false;
+      $('#npStage').textContent = 'Failed: ' + String(m.error).slice(0, 160);
+      setStatus('Could not create the project: ' + String(m.error).slice(0, 120), 'error');
+    }
+    if (m.type === 'done') {
+      np.busy = false; off();
+      $('#npStage').textContent = `Done — ${m.cues} captions, ${Math.round(m.duration)}s`;
+      const r = await E.newProject.adopt(m.work);
+      if (r?.ok) location.reload();
+      else setStatus('Project built at ' + m.work, 'ok');
+    }
+  });
+
+  const r = await E.newProject.create({
+    source: np.source, dest: np.dest, gradeRef: np.ref,
+    transcribe: !!model, model: model || 'small.en',
+  });
+  if (r?.error) {
+    np.busy = false; off();
+    $('#npGo').disabled = false;
+    $('#npStage').textContent = 'Failed: ' + r.error;
+  }
 }
 
 // ---------------------------------------------------------------- transcript editor

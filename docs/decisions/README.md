@@ -17,3 +17,4 @@ reverse it.
 | [0009](0009-auto-cut-signals.md) | Auto-cut trusts the measured audio; the transcript finds fillers, it does not veto silences | Accepted 2026-08-17 |
 | [0010](0010-transitions-and-look.md) | Transitions live on cuts (xfade, timeline re-timed); film looks applied at render time | Accepted 2026-08-17 |
 | [0011](0011-templates-two-engines.md) | Template packs = data + compositions; HyperFrames bundled, Remotion user-installed | Accepted 2026-08-17 |
+| [0012](0012-onboarding.md) | The app owns the on-ramp: raw video → project folder, plus a first-run tour | Accepted 2026-08-17 |

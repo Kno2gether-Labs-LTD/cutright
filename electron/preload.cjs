@@ -37,6 +37,17 @@ ipcRenderer.on('transcribe:port', (e, { id }) => {
   port.start();
 });
 
+const npListeners = new Set();
+ipcRenderer.on('newproject:port', (e, { id }) => {
+  const port = e.ports[0];
+  port.onmessage = (ev) => {
+    const msg = { id, ...ev.data };
+    if (msg.type === 'done' || msg.type === 'error') { try { port.close(); } catch {} }
+    for (const cb of npListeners) { try { cb(msg); } catch {} }
+  };
+  port.start();
+});
+
 const tplListeners = new Set();
 ipcRenderer.on('template:port', (e, { id }) => {
   const port = e.ports[0];
@@ -51,6 +62,9 @@ ipcRenderer.on('template:port', (e, { id }) => {
 const ptyData = new Set(), ptyExit = new Set();
 ipcRenderer.on('pty:data', (_e, d) => { for (const cb of ptyData) { try { cb(String(d)); } catch {} } });
 ipcRenderer.on('pty:exit', () => { for (const cb of ptyExit) { try { cb(); } catch {} } });
+
+const tourShow = new Set();
+ipcRenderer.on('tour:show', () => { for (const cb of tourShow) { try { cb(); } catch {} } });
 
 const projectChanged = new Set(), workspaceChanged = new Set();
 ipcRenderer.on('project:changed', () => { for (const cb of projectChanged) { try { cb(); } catch {} } });
@@ -68,10 +82,22 @@ contextBridge.exposeInMainWorld('editor', {
   config: () => ipcRenderer.invoke('config:get'),
   chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
   openWorkspace: (dir) => ipcRenderer.invoke('workspace:open', str(dir)),
+  newProject: {
+    pickVideo: () => ipcRenderer.invoke('project:pickVideo'),
+    pickFolder: (o = {}) => ipcRenderer.invoke('project:pickFolder', { defaultPath: str(o.defaultPath), title: str(o.title) }),
+    create: (o = {}) => ipcRenderer.invoke('project:create', {
+      source: str(o.source), dest: str(o.dest), transcribe: o.transcribe !== false,
+      model: str(o.model), language: str(o.language), gradeRef: str(o.gradeRef),
+      targetHeight: num(o.targetHeight, 1080), targetFps: num(o.targetFps, 30),
+    }),
+    adopt: (dir) => ipcRenderer.invoke('project:adopt', str(dir)),
+    onEvent: on(npListeners),
+  },
   getProject: () => ipcRenderer.invoke('project:get'),
   getTranscript: () => ipcRenderer.invoke('transcript:get'),
   saveProject: (p) => ipcRenderer.invoke('project:save', p),
   onProjectChanged: on(projectChanged),
+  onShowTour: on(tourShow),
   onWorkspaceChanged: on(workspaceChanged),
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),

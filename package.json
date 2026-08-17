@@ -42,6 +42,8 @@
       "engine/**/*",
       "templates/**/*",
       "schema/**/*",
+      "docs/GETTING_STARTED.md",
+      "docs/ACTION_ITEMS.md",
       "package.json",
       "!**/*.map"
     ],
@@ -49,7 +51,8 @@
     "asarUnpack": [
       "**/node_modules/node-pty/**/*",
       "engine/**/*",
-      "templates/**/*"
+      "templates/**/*",
+      "docs/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",

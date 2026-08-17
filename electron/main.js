@@ -323,6 +323,59 @@ async function checkEnvironment() {
   return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
 }
 
+// ---------------------------------------------------------------- new project
+// The on-ramp: a raw recording in, a workspace out. Without this the app can only open
+// folders someone else prepared, which is the single least obvious thing about it.
+async function pickVideo() {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose a recording to edit',
+    properties: ['openFile'],
+    filters: [{ name: 'Video', extensions: ['mov', 'mp4', 'm4v', 'mkv', 'avi', 'webm', 'mpg', 'mpeg'] }],
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: false };
+  const src = r.filePaths[0];
+  const base = basename(src).replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_');
+  return { ok: true, source: src, suggestedDest: join(dirname(src), base + '_edit'), name: basename(src) };
+}
+
+async function pickFolder(defaultPath, title) {
+  const r = await dialog.showOpenDialog(win, {
+    title: title || 'Choose a folder',
+    defaultPath, properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Choose',
+  });
+  return r.canceled || !r.filePaths[0] ? { ok: false } : { ok: true, dir: r.filePaths[0] };
+}
+
+function createProject(webContents, opts = {}) {
+  const source = String(opts.source || '');
+  const dest = String(opts.dest || '');
+  if (!source || !existsSync(source)) return { error: 'choose a video first' };
+  if (!dest) return { error: 'choose where to put the project' };
+
+  const child = utilityProcess.fork(join(__dir, 'newproject-worker.cjs'), [], {
+    serviceName: 'cve-newproject', stdio: 'pipe', env: { ...process.env },
+  });
+  const id = 'np' + Date.now();
+  const { port1, port2 } = new MessageChannelMain();
+  child.postMessage({ type: 'port' }, [port1]);
+  webContents.postMessage('newproject:port', { id }, [port2]);
+  child.stderr?.on('data', (d) => log('[newproject!]', d.toString().trim().slice(0, 300)));
+  child.stdout?.on('data', (d) => log('[newproject]', d.toString().trim().slice(0, 200)));
+
+  child.postMessage({ type: 'create', job: {
+    source, dest, engineDir: settings.engine,
+    transcribe: opts.transcribe !== false,
+    model: String(opts.model || 'small.en'),
+    language: String(opts.language || ''),
+    gradeRef: String(opts.gradeRef || ''),
+    targetHeight: Number(opts.targetHeight || 1080),
+    targetFps: Number(opts.targetFps || 30),
+  } });
+  // The port belongs to the renderer now, so it tells us when to adopt the new folder
+  // (see editor.newProject.adopt) rather than main trying to listen on a transferred port.
+  return { id, dest };
+}
+
 // ---------------------------------------------------------------- templates
 // A template is data + composition files (see templates/README.md). Two search paths:
 // the ones bundled with the app, and the user's own — the user's win on an id clash, so
@@ -619,6 +672,16 @@ function registerIpc() {
 
   ipcMain.handle('env:check', () => checkEnvironment());
   ipcMain.handle('analysis:autocut', (_e, o) => analyzeCuts(o || {}));
+  ipcMain.handle('project:pickVideo', () => pickVideo());
+  ipcMain.handle('project:pickFolder', (_e, o) => pickFolder(o?.defaultPath, o?.title));
+  ipcMain.handle('project:create', (e, o) => createProject(e.sender, o || {}));
+  ipcMain.handle('project:adopt', (_e, dir) => {
+    const d = String(dir || '');
+    if (!d || !existsSync(join(d, 'project.json'))) return { ok: false, error: 'no project.json in ' + d };
+    setWorkspace(d);
+    return { ok: true, work: settings.work };
+  });
+
   ipcMain.handle('templates:list', () => listTemplates().map((t) => ({
     id: t.id, name: t.name, description: t.description, version: t.version, engine: t.engine,
     author: t.author, license: t.license, builtin: t.builtin, previewUrl: t.previewUrl,
@@ -731,6 +794,13 @@ function buildMenu() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [
+      { label: 'Show Me Around (guided tour)', click: () => win?.webContents.send('tour:show') },
+      { label: 'Getting Started Guide', click: () => {
+        const guide = join(RES, 'docs/GETTING_STARTED.md');
+        if (existsSync(guide)) shell.openPath(guide);
+        else dialog.showMessageBox(win, { message: 'Guide not found', detail: guide });
+      } },
+      { type: 'separator' },
       { label: 'Open Log Folder', click: () => { try { shell.showItemInFolder(logPath); } catch {} } },
       { label: 'Reload Window', click: () => { try { win?.reload(); } catch {} } },
       { label: 'Check Environment…', click: async () => {

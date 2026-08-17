@@ -196,6 +196,11 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
 
     // CVE_SMOKE_PANEL=transcript|templates|autocut|look opens a panel before the screenshot
     // (used for documentation shots and for eyeballing a panel after a change)
+    if (process.env.CVE_SMOKE_TOUR) {
+      await win.webContents.executeJavaScript(`(() => { try { localStorage.removeItem('cutwright.tourSeen'); } catch {} startTour(true);
+        for (let i = 1; i < ${Number(process.env.CVE_SMOKE_TOUR) || 1}; i++) document.querySelector('#tourNext').click(); })()`);
+      await wait(1200);
+    }
     const panel = process.env.CVE_SMOKE_PANEL;
     if (panel) {
       const buttons = { transcript: '#btnTranscriptEdit', templates: '#btnTemplates',
@@ -214,11 +219,15 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
   }
 
   report.finished = new Date().toISOString();
+  // A fresh install legitimately shows the welcome screen and has no project — assert the
+  // editor chrome only when a project is actually open.
+  const fresh = !!report.checks.project?.error;
   const ok = !report.error
-    && report.checks.project?.cues > 0
-    && report.checks.visibility?.welcomeHidden === true
-    && report.checks.visibility?.header === true && report.checks.visibility?.timeline === true
-    && report.checks.visibility?.video === true && report.checks.visibility?.terminal === true
+    && (fresh || report.checks.project?.cues > 0)
+    && (fresh ? report.checks.visibility?.welcomeHidden === false
+              : report.checks.visibility?.welcomeHidden === true)
+    && (fresh || (report.checks.visibility?.header === true && report.checks.visibility?.timeline === true
+      && report.checks.visibility?.video === true && report.checks.visibility?.terminal === true))
     && (!want.includes('render') || report.checks.render?.done?.code === 0)
     && (!want.includes('export') || (report.checks.export?.done?.code === 0 && report.checks.export?.rippleExact === true))
     && (!want.includes('cancel') || (report.checks.cancel?.working === true && report.checks.cancel?.strayProcesses === 0))
