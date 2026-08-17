@@ -28,7 +28,7 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
     check('project', await win.webContents.executeJavaScript(
       `(() => { const p = window.__cve?.project; return p ? { duration: p.meta.duration, cues: p.captions.cues.length, scenes: p.scenes.length, style: p.meta.style } : { error: window.__cve?.status }; })()`));
     check('timeline', await win.webContents.executeJavaScript(
-      `({ sceneBlocks: document.querySelectorAll('#laneScenes .block').length, capTicks: document.querySelectorAll('#laneCaps .cap').length })`));
+      `({ sceneBlocks: document.querySelectorAll('#laneScenes .clip').length, capTicks: document.querySelectorAll('#laneCaps .cap').length })`));
     check('video', await win.webContents.executeJavaScript(
       `(() => { const v = document.querySelector('#video'); return { src: (v.currentSrc||v.src).slice(0,60), readyState: v.readyState, duration: Math.round(v.duration||0), error: v.error?.code||null }; })()`));
 
@@ -41,7 +41,7 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
         if (!t) return 'missing'; const el = document.elementFromPoint(t.left + dx, t.top + dy);
         return el ? (el.id || el.className || el.tagName) : 'none'; };
       return { welcomeHidden: !vis(document.querySelector('#welcome')),
-               header: vis(document.querySelector('header')), timeline: vis(document.querySelector('#timeline')),
+               header: vis(document.querySelector('header')), timeline: vis(document.querySelector('#timelinePanel')),
                video: vis(document.querySelector('#video')), terminal: vis(document.querySelector('#terminal')),
                inspector: vis(document.querySelector('#inspector')),
                onTopOfTimeline: at('#laneScenes'), onTopOfVideo: at('#video', 30, 30) };

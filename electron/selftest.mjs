@@ -28,12 +28,12 @@ export async function runEditTests({ win, settings }) {
   // ---------------------------------------------------------------- selection
   await test('select a scene → inspector + playhead', async () => {
     const r = await js(`(() => {
-      document.querySelector('#laneScenes .block').click();
-      const h = document.querySelector('#inspector h3 span')?.textContent || '';
+      document.querySelector('#laneScenes .clip').click();
+      const h = document.querySelector('#inspector h3 .kind')?.textContent || '';
       return { head: h, time: document.querySelector('#video').currentTime,
                sceneStart: window.__cve.project.scenes[0].start };
     })()`);
-    expect(/^SCENE/.test(r.head), 'inspector did not show SCENE: ' + r.head);
+    expect(/^scene$/i.test(r.head.trim()), 'inspector did not show the scene kind: ' + r.head);
     expect(Math.abs(r.time - r.sceneStart) < 0.6, `playhead ${r.time} != scene start ${r.sceneStart}`);
     return r;
   });
@@ -152,7 +152,7 @@ export async function runEditTests({ win, settings }) {
 
   await test('cut: Delete removes it → saved', async () => {
     const before = disk().cuts.length;
-    await js(`document.querySelector('#inspector h3 .del').click()`);
+    await js(`[...document.querySelectorAll('#inspector h3 button')].find(b => b.textContent === 'Delete').click()`);
     await settle();
     expect(disk().cuts.length === before - 1, 'cut not deleted');
     return { before, after: disk().cuts.length };
@@ -185,12 +185,12 @@ export async function runEditTests({ win, settings }) {
     await js(`document.querySelector('[data-add="sfx"]').click()`);
     await settle();
     expect(disk().audio.sfx.length === 1, 'sfx not added');
-    await js(`document.querySelector('#inspector h3 .del').click()`);
+    await js(`[...document.querySelectorAll('#inspector h3 button')].find(b => b.textContent === 'Delete').click()`);
     await settle();
     expect(disk().audio.sfx.length === 0, 'sfx not deleted');
-    await js(`(() => { document.querySelectorAll('#laneAudio .audioclip')[0].click(); })()`);
+    await js(`(() => { document.querySelectorAll('#laneAudio .clip')[0].click(); })()`);
     await wait(150);
-    await js(`document.querySelector('#inspector h3 .del').click()`);
+    await js(`[...document.querySelectorAll('#inspector h3 button')].find(b => b.textContent === 'Delete').click()`);
     await settle();
     expect(disk().audio.music.length === 0, 'music not deleted');
     return { music: 0, sfx: 0 };
@@ -198,9 +198,9 @@ export async function runEditTests({ win, settings }) {
 
   // ---------------------------------------------------------------- overlays (new in Phase 0)
   await test('overlay: track renders + disable/enable round-trips', async () => {
-    const has = await js(`document.querySelectorAll('#laneOverlays .overlayclip').length`);
+    const has = await js(`document.querySelectorAll('#laneOverlays .clip').length`);
     if (!has) return { skipped: 'no overlays in this project' };
-    await js(`document.querySelector('#laneOverlays .overlayclip').click()`);
+    await js(`document.querySelector('#laneOverlays .clip').click()`);
     await wait(150);
     await js(`[...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Disable').click()`);
     await settle();
@@ -209,6 +209,60 @@ export async function runEditTests({ win, settings }) {
     await settle();
     expect(disk().overlays[0].enabled === true, 'overlay enable not persisted');
     return { overlays: disk().overlays.length };
+  });
+
+  // ---------------------------------------------------------------- timeline controls
+  await test('timeline: zoom in/out and Fit change the scale', async () => {
+    const r = await js(`(async () => {
+      const z0 = window.__cve.zoom;
+      document.querySelector('#btnZoomIn').click(); const z1 = window.__cve.zoom;
+      document.querySelector('#btnZoomIn').click();
+      document.querySelector('#btnZoomIn').click(); const z2 = window.__cve.zoom;
+      const wideLabels = document.querySelectorAll('#laneCaps .cap.wide').length;
+      document.querySelector('#btnFit').click(); const z3 = window.__cve.zoom;
+      return { z0, z1, z2, z3, wideLabels };
+    })()`);
+    expect(r.z1 > r.z0 && r.z2 > r.z1, `zoom in did not increase scale: ${JSON.stringify(r)}`);
+    expect(Math.abs(r.z3 - r.z0) < r.z0 * 0.2, `Fit did not restore the fitted scale: ${JSON.stringify(r)}`);
+    expect(r.wideLabels > 0, 'zooming in did not switch captions to labelled blocks');
+    return r;
+  });
+
+  await test('keyboard: space plays, S cuts at the playhead, Esc deselects', async () => {
+    const before = (disk().cuts || []).length;
+    const r = await js(`(async () => {
+      const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      const v = document.querySelector('#video');
+      v.currentTime = 30; key(' '); await new Promise(r => setTimeout(r, 400));
+      const playing = !v.paused; key(' '); await new Promise(r => setTimeout(r, 200));
+      key('s'); await new Promise(r => setTimeout(r, 100));
+      const selectedAfterS = !!document.querySelector('#inspector h3');
+      key('Escape'); await new Promise(r => setTimeout(r, 100));
+      return { playing, paused: v.paused, selectedAfterS, deselected: !document.querySelector('#inspector h3') };
+    })()`);
+    await settle();
+    expect(r.playing && r.paused, 'space did not toggle playback');
+    expect(disk().cuts.length === before + 1, 'S did not add a cut');
+    expect(r.deselected, 'Escape did not clear the selection');
+    // undo the test cut
+    const p = disk(); p.cuts.pop(); writeFileSync(projectFile, JSON.stringify(p, null, 2));
+    await wait(300);
+    return r;
+  });
+
+  await test('panels: the rail and timeline splitters resize', async () => {
+    const r = await js(`(async () => {
+      const rail = document.querySelector('#rail');
+      const w0 = rail.getBoundingClientRect().width;
+      const h = document.querySelector('#splitRail');
+      h.dispatchEvent(new PointerEvent('pointerdown', { clientX: 900, clientY: 400, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 820, clientY: 400, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 150));
+      return { w0, w1: rail.getBoundingClientRect().width };
+    })()`);
+    expect(r.w1 > r.w0 + 40, `rail did not widen: ${JSON.stringify(r)}`);
+    return r;
   });
 
   // ---------------------------------------------------------------- agent loop
@@ -230,7 +284,8 @@ export async function runEditTests({ win, settings }) {
     const r = await js(`(() => {
       const ruler = document.querySelector('#ruler');
       const box = ruler.getBoundingClientRect();
-      ruler.dispatchEvent(new MouseEvent('click', { clientX: box.left + box.width * 0.5, clientY: box.top + 5, bubbles: true }));
+      ruler.dispatchEvent(new PointerEvent('pointerdown', { clientX: box.left + box.width * 0.5, clientY: box.top + 5, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
       return { time: document.querySelector('#video').currentTime, dur: window.__cve.project.meta.duration };
     })()`);
     expect(r.time > r.dur * 0.3 && r.time < r.dur * 0.7, `seek landed at ${r.time} for duration ${r.dur}`);

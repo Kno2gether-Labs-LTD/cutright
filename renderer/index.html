@@ -12,21 +12,96 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
 <header>
-  <div class="brand">◆ Cutwright <span id="work" class="muted"></span>
-    <button id="btnWorkspace" class="ghost" title="Open a different workspace folder">change…</button></div>
+  <div class="brand">
+    <img src="logo.png" alt="" class="logomark">
+    <span class="wordmark">Cutwright</span>
+    <button id="btnWorkspace" class="chip" title="Change workspace"><span id="work">—</span></button>
+  </div>
   <div class="actions">
-    <span id="status" class="muted"></span>
-    <button id="btnPreview">▶ Preview section</button>
-    <button id="btnExport" class="primary">⤓ Export</button>
-    <button id="btnCancel" hidden>✕ Cancel</button>
+    <span id="status" class="status">Ready</span>
+    <div id="progress" class="progress" hidden><div id="progressBar"></div></div>
+    <button id="btnPreview" title="Render just the selected section (P)">Preview section</button>
+    <button id="btnExport" class="primary" title="Render the whole video (E)">Export</button>
+    <button id="btnCancel" class="danger" hidden title="Stop the current render">Cancel</button>
   </div>
 </header>
 
 <div id="envbar" class="envbar" hidden></div>
 
+<main>
+  <section class="stage">
+    <div class="preview">
+      <video id="video" controls playsinline preload="metadata"></video>
+      <div id="previewTag" class="tag">FINAL.mp4</div>
+    </div>
+
+    <div class="hsplit" id="splitTimeline" title="Drag to resize the timeline"></div>
+
+    <section class="timeline-panel" id="timelinePanel">
+      <div class="tl-toolbar">
+        <span class="tl-time"><b id="tcNow">0:00.00</b><span class="dim"> / <span id="tcDur">0:00</span></span></span>
+        <span class="spacer"></span>
+        <button id="btnZoomOut" class="icon" title="Zoom out (−)">−</button>
+        <button id="btnZoomIn" class="icon" title="Zoom in (+)">+</button>
+        <button id="btnFit" class="icon wide" title="Fit the whole video (F)">Fit</button>
+        <label class="toggle" title="Snap to clip edges and the playhead">
+          <input type="checkbox" id="chkSnap" checked><span>Snap</span></label>
+        <span class="kbd-hint dim">space play · ←/→ frame · S cut · ⌫ delete</span>
+      </div>
+
+      <div class="tl-body">
+        <div class="tl-heads" id="tlHeads">
+          <div class="thead ruler-head"></div>
+          <div class="thead" data-track="scenes"><span>Scenes</span></div>
+          <div class="thead" data-track="overlays"><span>Overlays</span>
+            <button class="mini" data-add="overlay" title="Add an overlay clip (HyperFrames / alpha video)">+</button></div>
+          <div class="thead" data-track="captions"><span>Captions</span></div>
+          <div class="thead" data-track="cuts"><span>Cuts</span>
+            <button class="mini" data-add="cut" title="Cut at the playhead (S)">+</button></div>
+          <div class="thead" data-track="audio"><span>Audio</span>
+            <button class="mini" data-add="music" title="Add a music layer">♪</button>
+            <button class="mini" data-add="sfx" title="Add an SFX layer">✳</button>
+            <button class="mini" data-gen="1" title="Generate audio with ElevenLabs">✨</button></div>
+        </div>
+
+        <div class="tl-scroll" id="tlScroll">
+          <div class="tl-inner" id="tlInner">
+            <div class="ruler" id="ruler"></div>
+            <div class="lane" id="laneScenes" data-lane="scenes"></div>
+            <div class="lane" id="laneOverlays" data-lane="overlays"></div>
+            <div class="lane" id="laneCaps" data-lane="captions"></div>
+            <div class="lane" id="laneCuts" data-lane="cuts"></div>
+            <div class="lane" id="laneAudio" data-lane="audio"></div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <div class="vsplit" id="splitRail" title="Drag to resize the panel"></div>
+
+  <aside class="rail" id="rail">
+    <div class="rail-head">
+      <span>Inspector</span>
+      <span id="selBadge" class="badge dim">nothing selected</span>
+    </div>
+    <div class="inspector" id="inspector">
+      <div class="empty">Select a scene, caption, cut, overlay or audio layer on the timeline.</div>
+    </div>
+    <div class="hsplit" id="splitTerm" title="Drag to resize the terminal"></div>
+    <div class="term">
+      <div class="term-head">Terminal — run <code>claude</code>, then “edit this video”</div>
+      <div id="terminal"></div>
+    </div>
+  </aside>
+</main>
+
 <div id="welcome" class="welcome" hidden>
   <div class="wbox">
+    <img src="logo.png" alt="" class="wlogo">
     <h1>Cutwright</h1>
     <p>Open a <b>workspace</b> — the folder holding <code>project.json</code>, <code>graded_master.mp4</code> and your renders.</p>
     <button id="wOpen" class="primary">Open Workspace…</button>
@@ -35,34 +110,6 @@
       “edit this video end to end” — the <code>video-edit</code> skill writes the workspace this app opens.</p>
   </div>
 </div>
-
-<main>
-  <section class="stage">
-    <div class="preview">
-      <video id="video" controls playsinline preload="metadata"></video>
-      <div id="previewTag" class="tag">FINAL.mp4</div>
-    </div>
-    <div class="timeline" id="timeline">
-      <div class="ruler" id="ruler"></div>
-      <div class="track" id="trackScenes"><label>Scenes</label><div class="lane" id="laneScenes"></div></div>
-      <div class="track" id="trackOverlays"><label>Overlays</label><div class="lane" id="laneOverlays">
-        <button class="add" data-add="overlay">+ overlay (HyperFrames / alpha clip)</button></div></div>
-      <div class="track" id="trackCaps"><label>Captions</label><div class="lane" id="laneCaps"></div></div>
-      <div class="track" id="trackCuts"><label>Cuts</label><div class="lane" id="laneCuts">
-        <button class="add" data-add="cut">+ cut at playhead</button></div></div>
-      <div class="track" id="trackAudio"><label>Audio</label><div class="lane" id="laneAudio">
-        <button class="add" data-add="music">+ music</button><button class="add" data-add="sfx">+ sfx</button>
-        <button class="add" data-gen="1">✨ generate (ElevenLabs)</button></div></div>
-      <div class="playhead" id="playhead"></div>
-    </div>
-    <div class="inspector" id="inspector"><div class="empty">Select an element on the timeline to edit it.</div></div>
-  </section>
-
-  <aside class="term">
-    <div class="term-head">Terminal — run <code>claude</code>, then: “edit the video in this workspace”</div>
-    <div id="terminal"></div>
-  </aside>
-</main>
 
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>

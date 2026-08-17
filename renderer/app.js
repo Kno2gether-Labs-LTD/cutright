@@ -1,252 +1,458 @@
-// Claude Video Editor — renderer.
+// Cutwright — renderer.
 // Runs sandboxed (no Node, no network). Everything that touches disk, ffmpeg or a shell
-// goes through `window.editor`, the narrow contextBridge API defined in electron/preload.cjs.
-const $ = s => document.querySelector(s);
+// goes through `window.editor`, the narrow contextBridge API in electron/preload.cjs.
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
 const E = window.editor;
-let project = null, dur = 1, sel = null, WORK = '', job = null;   // sel = {kind, index}
+
+let project = null, dur = 1, fps = 30, sel = null, WORK = '', job = null;
+let zoom = 10;                 // pixels per second
+const MIN_ZOOM = 0.2, MAX_ZOOM = 400;
 const video = $('#video');
 
-// small debug surface for the in-app smoke test (electron/smoke.mjs) — page data only
-window.__cve = { get project() { return project; }, get status() { return $('#status').textContent; },
-  loadVideo: (n, s) => loadVideo(n, s), termLog: '' };
+// debug surface for the in-app tests (page data only)
+window.__cve = {
+  get project() { return project; }, get status() { return $('#status').textContent; },
+  get zoom() { return zoom; }, loadVideo: (n, s) => loadVideo(n, s), termLog: '',
+};
 
+// ---------------------------------------------------------------- boot
 async function boot() {
   const cfg = await E.config();
-  WORK = cfg.work; $('#work').textContent = cfg.work || 'no workspace';
+  WORK = cfg.work;
+  $('#work').textContent = cfg.work ? cfg.work.replace(/^.*\//, '') : 'no workspace';
+  $('#btnWorkspace').title = cfg.work || 'Choose a workspace';
   if (!cfg.hasWorkspace) { showWelcome(cfg); initTerminal(); return; }
+
   await loadProject();
   loadVideo('FINAL.mp4');
   initTerminal();
-  window.addEventListener('resize', renderTimeline);
-  requestAnimationFrame(tickPlayhead);
-  // main watches project.json on disk (fs.watch) — no polling
-  E.onProjectChanged(reloadIfChanged);
+  initSplitters();
+  initKeys();
+  initTimelineInteraction();
   checkEnv();
-  E.onWorkspaceChanged(async (w) => { WORK = w; $('#work').textContent = w; sel = null; await loadProject(); loadVideo('FINAL.mp4'); });
+
+  window.addEventListener('resize', () => { renderTimeline(); });
+  requestAnimationFrame(tick);
+  E.onProjectChanged(reloadIfChanged);
+  E.onWorkspaceChanged(async (w) => {
+    WORK = w; $('#work').textContent = w.replace(/^.*\//, ''); sel = null;
+    await loadProject(); loadVideo('FINAL.mp4');
+  });
   $('#btnWorkspace').onclick = () => E.chooseWorkspace();
 }
-// First run (or a workspace that went away): ask for one instead of showing an empty editor.
+
 function showWelcome(cfg) {
-  const w = $('#welcome'); w.hidden = false;
-  $('#wOpen').onclick = () => E.chooseWorkspace().then(r => r?.ok && location.reload());
+  $('#welcome').hidden = false;
+  $('#wOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
   const box = $('#wRecent'); box.innerHTML = '';
-  (cfg.recent || []).forEach(dir => {
+  (cfg.recent || []).forEach((dir) => {
     const b = document.createElement('button');
     b.textContent = dir;
-    b.onclick = () => E.openWorkspace(dir).then(r => r?.ok && location.reload());
+    b.onclick = () => E.openWorkspace(dir).then((r) => r?.ok && location.reload());
     box.appendChild(b);
   });
 }
 
 async function loadProject() {
   project = await E.getProject();
-  if (project.error) { setStatus(project.error); project = null; return; }
-  dur = project.meta.duration;
+  if (project.error) { setStatus(project.error, 'error'); project = null; return; }
+  dur = project.meta.duration || 1;
+  fps = project.meta.fps || 30;
+  $('#tcDur').textContent = fmt(dur);
+  fitZoom();
   renderTimeline();
+  renderInspector();
 }
+
 async function reloadIfChanged() {
-  if (Date.now() - lastEdit < 3000) return;              // don't clobber a fresh local edit
+  if (Date.now() - lastEdit < 3000) return;         // don't clobber a fresh local edit
   const p = await E.getProject();
   if (p.error || JSON.stringify(p) === JSON.stringify(project)) return;
-  project = p; dur = p.meta.duration; renderTimeline(); if (sel) renderInspector();
-  setStatus('project reloaded (edited on disk)');
+  project = p; dur = p.meta.duration || 1; fps = p.meta.fps || 30;
+  $('#tcDur').textContent = fmt(dur);
+  renderTimeline(); renderInspector();
+  setStatus('Project reloaded — edited on disk', 'ok');
 }
+
 function loadVideo(name, seek) {
   $('#previewTag').textContent = name;
   video.src = E.mediaUrl(WORK + '/' + name, true);
   if (seek != null) video.addEventListener('loadedmetadata', () => { video.currentTime = seek; }, { once: true });
 }
-function setStatus(t) { $('#status').textContent = t || ''; }
 
-// The app does not bundle ffmpeg (Apache-2.0 — see README § licensing), so say so loudly
-// and early if a required tool is missing, rather than dying mid-render.
+function setStatus(t, kind) {
+  const el = $('#status');
+  el.textContent = t || 'Ready';
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+// The app does not bundle ffmpeg (Apache-2.0), so missing tools must be loud and early.
 async function checkEnv() {
   const env = await E.checkEnvironment();
   window.__cve.env = env;
   const bar = $('#envbar');
-  if (env.ok) { bar.hidden = true; return; }
-  bar.hidden = false;
-  bar.textContent = 'Missing: ' + env.missing.map(m => `${m.tool} (${m.hint})`).join(' · ');
+  if (env.ok) { bar.hidden = true; $('main').classList.remove('has-envbar'); return; }
+  bar.hidden = false; $('main').classList.add('has-envbar');
+  bar.textContent = 'Missing: ' + env.missing.map((m) => `${m.tool} — ${m.hint}`).join('   ·   ');
 }
 
-// ---------- timeline ----------
-function laneW() { return $('#laneScenes').clientWidth; }
-function x2t(px) { return px / laneW() * dur; }
-function t2x(t) { return t / dur * laneW(); }
+// ---------------------------------------------------------------- timeline
+const t2x = (t) => t * zoom;
+const x2t = (x) => x / zoom;
+const laneWidth = () => Math.max($('#tlScroll').clientWidth, dur * zoom);
+
+function fitZoom() {
+  const w = $('#tlScroll').clientWidth || 900;
+  zoom = clamp((w - 8) / Math.max(dur, 0.1), MIN_ZOOM, MAX_ZOOM);
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function setZoom(next, anchorClientX) {
+  const scroll = $('#tlScroll');
+  const rect = scroll.getBoundingClientRect();
+  const anchorX = anchorClientX == null ? rect.width / 2 : anchorClientX - rect.left;
+  const tAtAnchor = x2t(scroll.scrollLeft + anchorX);
+  zoom = clamp(next, MIN_ZOOM, MAX_ZOOM);
+  renderTimeline();
+  scroll.scrollLeft = Math.max(0, t2x(tAtAnchor) - anchorX);
+}
+
+// nice ruler steps, chosen so labels never collide
+const STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+function rulerStep() {
+  const minPx = 68;
+  return STEPS.find((s) => s * zoom >= minPx) || STEPS[STEPS.length - 1];
+}
 
 function renderTimeline() {
   if (!project) return;
+  const W = laneWidth();
+  $('#tlInner').style.width = W + 'px';
+
   // ruler
   const r = $('#ruler'); r.innerHTML = '';
-  const step = dur > 1200 ? 120 : dur > 300 ? 60 : 15;
-  for (let t = 0; t <= dur; t += step) {
-    const d = document.createElement('div'); d.className = 'tick'; d.style.left = t2x(t) + 'px';
-    d.textContent = fmt(t); r.appendChild(d);
+  const step = rulerStep();
+  for (let t = 0; t <= dur + 0.001; t += step) {
+    const d = document.createElement('div');
+    d.className = 'tick'; d.style.left = t2x(t) + 'px';
+    d.textContent = step < 1 ? t.toFixed(1) + 's' : fmt(t);
+    r.appendChild(d);
   }
-  // scenes
-  const ls = $('#laneScenes'); ls.innerHTML = '';
-  (project.scenes || []).forEach((s, i) => {
-    const b = document.createElement('div'); b.className = 'block scene ' + s.type;
-    b.style.left = t2x(s.start) + 'px'; b.style.width = Math.max(24, t2x(s.dur)) + 'px';
-    b.textContent = s.headline || s.type; b.title = `${s.type} @ ${fmt(s.start)}`;
-    b.onclick = () => select('scene', i); if (sel?.kind === 'scene' && sel.index === i) b.classList.add('selected');
-    ls.appendChild(b);
-  });
-  // overlays (HyperFrames / any RGBA clip composited over the frame)
-  const lo = $('#laneOverlays'); [...lo.querySelectorAll('.overlayclip')].forEach(n => n.remove());
-  (project.overlays || []).forEach((o, i) => {
-    const b = document.createElement('div'); b.className = 'overlayclip';
-    b.style.left = t2x(o.start || 0) + 'px'; b.style.width = Math.max(40, t2x(o.dur || 3)) + 'px';
-    b.textContent = (o.src || '').split('/').pop(); b.title = `${o.src} @ ${fmt(o.start || 0)}`;
-    b.style.opacity = o.enabled === false ? 0.45 : 1;
-    b.onclick = () => select('overlay', i);
-    if (sel?.kind === 'overlay' && sel.index === i) b.classList.add('selected');
-    lo.appendChild(b);
-  });
 
-  // captions (ticks)
+  // scenes
+  fillLane('#laneScenes', (project.scenes || []).map((s, i) => ({
+    i, start: s.start, dur: s.dur, cls: 'clip scene ' + (s.type || ''),
+    label: s.headline || s.type, title: `${s.type} · ${fmt(s.start)} → ${fmt(s.start + s.dur)}`,
+  })), 'scene');
+
+  // overlays
+  fillLane('#laneOverlays', (project.overlays || []).map((o, i) => ({
+    i, start: o.start || 0, dur: o.dur || 3, cls: 'clip overlay' + (o.enabled === false ? ' disabled' : ''),
+    label: (o.src || '').split('/').pop(), title: `${o.src} · ${fmt(o.start || 0)}`,
+  })), 'overlay');
+
+  // captions — blocks with text when zoomed in, thin ticks when zoomed out
   const lc = $('#laneCaps'); lc.innerHTML = '';
-  (project.captions.cues || []).forEach((c, i) => {
-    const t = document.createElement('div'); t.className = 'cap' + (c.tokens.some(x => x.e) ? ' emph' : '');
-    t.style.left = t2x(c.start) + 'px'; t.title = c.tokens.map(x => x.t).join(' ');
-    t.onclick = () => select('caption', i); if (sel?.kind === 'caption' && sel.index === i) t.classList.add('selected');
-    lc.appendChild(t);
+  const cues = project.captions?.cues || [];
+  const wide = zoom > 20;
+  const frag = document.createDocumentFragment();
+  let lastX = -99;
+  cues.forEach((c, i) => {
+    const x = t2x(c.start), w = Math.max(wide ? 14 : 2, t2x((c.end || c.start + 0.4) - c.start));
+    if (!wide && x - lastX < 1.2 && !(sel?.kind === 'caption' && sel.index === i)) return;  // don't stack ticks
+    lastX = x;
+    const el = document.createElement('div');
+    el.className = 'cap' + (c.tokens?.some((t) => t.e) ? ' emph' : '') + (wide ? ' wide' : '');
+    el.style.left = x + 'px'; el.style.width = w + 'px';
+    if (wide) el.textContent = (c.tokens || []).map((t) => t.t).join(' ');
+    el.title = (c.tokens || []).map((t) => t.t).join(' ') + ` · ${fmt(c.start)}`;
+    if (sel?.kind === 'caption' && sel.index === i) el.classList.add('selected');
+    el.onclick = (ev) => { ev.stopPropagation(); select('caption', i); };
+    frag.appendChild(el);
   });
+  lc.appendChild(frag);
+
   // cuts
-  const lcut = $('#laneCuts'); [...lcut.querySelectorAll('.cutblock')].forEach(n => n.remove());
-  (project.cuts || []).forEach((c, i) => {
-    const b = document.createElement('div'); b.className = 'cutblock';
-    b.style.left = t2x(c.start) + 'px'; b.style.width = Math.max(6, t2x(c.end - c.start)) + 'px';
-    b.title = `cut ${fmt(c.start)}–${fmt(c.end)}`; b.onclick = () => select('cut', i);
-    if (sel?.kind === 'cut' && sel.index === i) b.classList.add('selected'); lcut.appendChild(b);
-  });
-  // audio
-  const la = $('#laneAudio'); [...la.querySelectorAll('.audioclip')].forEach(n => n.remove());
-  const audio = project.audio || { music: [], sfx: [] };
+  fillLane('#laneCuts', (project.cuts || []).map((c, i) => ({
+    i, start: c.start, dur: Math.max(0.05, c.end - c.start), cls: 'clip cut', minW: 46,
+    label: `−${(c.end - c.start).toFixed(1)}s`, title: `cut ${fmt(c.start)} → ${fmt(c.end)} (removed on export)`,
+  })), 'cut');
+
+  // audio (music + sfx share one lane, tagged)
+  const la = $('#laneAudio'); la.innerHTML = '';
+  const audio = project.audio || {};
   [['music', audio.music], ['sfx', audio.sfx]].forEach(([kind, arr]) => (arr || []).forEach((L, i) => {
-    const b = document.createElement('div'); b.className = 'audioclip';
-    b.style.left = t2x(L.start || 0) + 'px'; b.style.width = Math.max(30, t2x(L.dur || 4)) + 'px';
-    b.textContent = kind + ':' + (L.src || '').split('/').pop(); b.onclick = () => select(kind, i);
-    la.appendChild(b);
+    const el = document.createElement('div');
+    el.className = 'clip audio';
+    el.style.left = t2x(L.start || 0) + 'px';
+    el.style.width = Math.max(16, t2x(L.dur || 3)) + 'px';
+    el.textContent = (kind === 'music' ? '♪ ' : '✳ ') + ((L.src || '').split('/').pop() || 'empty');
+    el.title = `${kind} · ${L.src || 'no source'} · ${fmt(L.start || 0)}`;
+    if (sel?.kind === kind && sel.index === i) el.classList.add('selected');
+    el.onclick = (ev) => { ev.stopPropagation(); select(kind, i); };
+    la.appendChild(el);
   }));
+
+  positionPlayhead();
 }
 
-// ---------- selection + inspector ----------
-function select(kind, index) { sel = { kind, index }; renderTimeline(); renderInspector(); const el = elemOf(sel); if (el) video.currentTime = (el.start || 0); }
+function fillLane(laneSel, items, kind) {
+  const lane = $(laneSel); lane.innerHTML = '';
+  items.forEach((it) => {
+    const el = document.createElement('div');
+    el.className = it.cls;
+    el.style.left = t2x(it.start) + 'px';
+    el.style.width = Math.max(it.minW || 10, t2x(it.dur)) + 'px';
+    el.textContent = it.label || '';
+    el.title = it.title || '';
+    if (sel?.kind === kind && sel.index === it.i) el.classList.add('selected');
+    el.onclick = (ev) => { ev.stopPropagation(); select(kind, it.i); };
+    lane.appendChild(el);
+  });
+}
+
+function positionPlayhead() {
+  const t = video.currentTime || 0;
+  $('#playhead').style.left = t2x(t) + 'px';
+  $('#tcNow').textContent = fmtMs(t);
+}
+
+let lastT = -1;
+function tick() {
+  const t = video.currentTime || 0;
+  if (t !== lastT) {
+    lastT = t;
+    positionPlayhead();
+    // keep the playhead in view while playing
+    const scroll = $('#tlScroll'), x = t2x(t);
+    if (!video.paused && (x < scroll.scrollLeft + 20 || x > scroll.scrollLeft + scroll.clientWidth - 40)) {
+      scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.35);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function initTimelineInteraction() {
+  const scroll = $('#tlScroll');
+  // click anywhere empty (or the ruler) → move the playhead
+  const seekFrom = (ev) => {
+    const rect = $('#tlInner').getBoundingClientRect();
+    video.currentTime = clamp(x2t(ev.clientX - rect.left), 0, dur);
+    positionPlayhead();
+  };
+  $('#ruler').addEventListener('pointerdown', (ev) => {
+    seekFrom(ev);
+    const move = (e) => seekFrom(e);
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  });
+  $$('.lane').forEach((l) => l.addEventListener('pointerdown', (ev) => { if (ev.target === l) seekFrom(ev); }));
+
+  // ⌘/ctrl + wheel = zoom around the cursor; plain wheel = horizontal scroll
+  scroll.addEventListener('wheel', (ev) => {
+    if (ev.metaKey || ev.ctrlKey) {
+      ev.preventDefault();
+      setZoom(zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15), ev.clientX);
+    } else if (Math.abs(ev.deltaX) < Math.abs(ev.deltaY)) {
+      scroll.scrollLeft += ev.deltaY;
+    }
+  }, { passive: false });
+
+  $('#btnZoomIn').onclick = () => setZoom(zoom * 1.5);
+  $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
+  $('#btnFit').onclick = () => { fitZoom(); renderTimeline(); $('#tlScroll').scrollLeft = 0; };
+}
+
+// ---------------------------------------------------------------- selection + inspector
+function select(kind, index) {
+  sel = { kind, index };
+  const el = elemOf(sel);
+  if (el && el.start != null) video.currentTime = clamp(el.start, 0, dur);
+  renderTimeline(); renderInspector();
+  // scroll the selection into view
+  const x = t2x(el?.start || 0), scroll = $('#tlScroll');
+  if (x < scroll.scrollLeft || x > scroll.scrollLeft + scroll.clientWidth - 40) {
+    scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.35);
+  }
+}
+function deselect() { sel = null; renderTimeline(); renderInspector(); }
+
 function elemOf(s) {
   if (!s || !project) return null;
-  if (s.kind === 'scene') return project.scenes[s.index];
-  if (s.kind === 'caption') return project.captions.cues[s.index];
-  if (s.kind === 'music') return project.audio.music[s.index];
-  if (s.kind === 'sfx') return project.audio.sfx[s.index];
-  if (s.kind === 'cut') return project.cuts[s.index];
-  if (s.kind === 'overlay') return project.overlays[s.index];
+  if (s.kind === 'scene') return project.scenes?.[s.index];
+  if (s.kind === 'caption') return project.captions?.cues?.[s.index];
+  if (s.kind === 'music') return project.audio?.music?.[s.index];
+  if (s.kind === 'sfx') return project.audio?.sfx?.[s.index];
+  if (s.kind === 'cut') return project.cuts?.[s.index];
+  if (s.kind === 'overlay') return project.overlays?.[s.index];
+  return null;
 }
+
 function field(label, val, on, type = 'text') {
   const f = document.createElement('div'); f.className = 'field';
   const l = document.createElement('label'); l.textContent = label; f.appendChild(l);
   const inp = document.createElement(type === 'area' ? 'textarea' : 'input');
-  if (type !== 'area') inp.type = type; inp.value = val ?? '';
-  inp.oninput = () => on(inp.value); f.appendChild(inp); return f;
+  if (type !== 'area') inp.type = type;
+  if (type === 'number') inp.step = 'any';
+  inp.value = val ?? '';
+  inp.oninput = () => on(inp.value);
+  f.appendChild(inp);
+  return f;
 }
+const rowOf = (fields) => { const r = document.createElement('div'); r.className = 'row'; fields.forEach((f) => r.appendChild(f)); return r; };
+const hint = (t) => { const p = document.createElement('p'); p.className = 'hint'; p.textContent = t; return p; };
+const sep = () => { const d = document.createElement('div'); d.className = 'sep'; return d; };
+const sechead = (t) => { const d = document.createElement('div'); d.className = 'sechead'; d.textContent = t; return d; };
+function btn(label, onClick, cls) {
+  const b = document.createElement('button'); b.textContent = label; b.onclick = onClick;
+  if (cls) b.className = cls; return b;
+}
+const btnRow = (...buttons) => { const d = document.createElement('div'); d.className = 'btnrow'; buttons.forEach((b) => d.appendChild(b)); return d; };
+
 function renderInspector() {
   const box = $('#inspector'); box.innerHTML = '';
-  const e = elemOf(sel); if (!e) { box.innerHTML = '<div class="empty">Select an element on the timeline to edit it.</div>'; return; }
-  const h = document.createElement('h3');
-  const title = document.createElement('span'); title.textContent = `${sel.kind.toUpperCase()} — ${fmt(e.start || 0)}`; h.appendChild(title);
-  const del = document.createElement('button'); del.className = 'del'; del.textContent = 'Delete'; del.onclick = () => remove();
-  h.appendChild(del); box.appendChild(h);
-
-  if (sel.kind === 'caption') {
-    const toks = document.createElement('div'); toks.className = 'tokens';
-    e.tokens.forEach((tk, i) => { const s = document.createElement('span'); s.className = 'tok' + (tk.e ? ' e' : '');
-      s.textContent = tk.t; s.title = 'click: toggle highlight · dblclick: edit text';
-      s.onclick = () => { tk.e = !tk.e; save(); renderInspector(); };
-      s.ondblclick = () => { const v = prompt('Edit word', tk.t); if (v != null) { tk.t = v; save(); renderInspector(); } };
-      toks.appendChild(s); });
-    const wrap = document.createElement('div'); wrap.className = 'field';
-    const wl = document.createElement('label'); wl.textContent = 'Words'; wrap.appendChild(wl);
-    wrap.appendChild(toks); box.appendChild(wrap);
-    box.appendChild(field('Full text', e.tokens.map(t => t.t).join(' '), v => { const ws = v.split(/\s+/).filter(Boolean); e.tokens = ws.map((w, i) => ({ t: w, e: e.tokens[i]?.e || false })); save(); }));
-    const o = e.overrides = e.overrides || {};
-    box.appendChild(rowOf([
-      field('Start', e.start, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
-      field('End', e.end, v => { e.end = +v; save(); }, 'number'),
-    ]));
-    box.appendChild(rowOf([
-      field('Y pos', o.cy ?? project.captions.defaults.cy, v => { o.cy = +v; save(); }, 'number'),
-      field('Size', o.fontsize ?? project.captions.defaults.fontsize, v => { o.fontsize = +v; save(); }, 'number'),
-      field('Highlight', o.highlight ?? project.captions.defaults.highlight, v => { o.highlight = v; save(); }),
-    ]));
-    box.appendChild(defaultsRow());
-  } else if (sel.kind === 'scene') {
-    box.appendChild(field('Headline', e.headline, v => { e.headline = v; save(); renderTimeline(); }));
-    box.appendChild(rowOf([
-      field('Type', e.type, v => { e.type = v; save(); }),
-      field('Start', e.start, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
-      field('Duration', e.dur, v => { e.dur = +v; save(); renderTimeline(); }, 'number'),
-    ]));
-    if (e.items) box.appendChild(field('Items (one per line: TEXT|color)', e.items.map(it => typeof it === 'string' ? it : `${it.text}|${it.color || 'white'}`).join('\n'),
-      v => { e.items = v.split('\n').filter(Boolean).map(l => { const [t, c] = l.split('|'); return e.type === 'checklist' ? t.trim() : { text: t.trim(), color: (c || 'white').trim() }; }); save(); }, 'area'));
-    if (e.big != null) box.appendChild(field('Big text', e.big, v => { e.big = v; save(); }));
-    if (e.sub != null) box.appendChild(field('Sub', e.sub, v => { e.sub = v; save(); }));
-    if (e.target != null) box.appendChild(field('Counter target', e.target, v => { e.target = +v; save(); }, 'number'));
-    if (e.old != null) { box.appendChild(field('Old (struck)', e.old, v => { e.old = v; save(); })); box.appendChild(field('New', e.new, v => { e.new = v; save(); })); }
-  } else if (sel.kind === 'cut') {
-    box.appendChild(hint('This range is REMOVED on Export — the video splices together and captions/scenes/audio after it shift earlier. (Preview shows the original timeline.)'));
-    box.appendChild(rowOf([
-      field('Cut start', e.start, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
-      field('Cut end', e.end, v => { e.end = +v; save(); renderTimeline(); }, 'number'),
-    ]));
-    const set = document.createElement('div'); set.className = 'field';
-    const b1 = document.createElement('button'); b1.textContent = 'Set start = playhead'; b1.onclick = () => { e.start = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); };
-    const b2 = document.createElement('button'); b2.textContent = 'Set end = playhead'; b2.onclick = () => { e.end = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); };
-    set.append(b1, b2); box.appendChild(set);
-  } else if (sel.kind === 'overlay') {
-    box.appendChild(hint('An overlay is any clip with alpha (HyperFrames “render --format mov”, a PNG sequence, a transparent WebM) composited over the video for its window. Cuts re-time it like everything else.'));
-    box.appendChild(field('Source', e.src, v => { e.src = v; save(); renderTimeline(); }));
-    const pick = document.createElement('div'); pick.className = 'field';
-    const pb = document.createElement('button'); pb.textContent = 'Choose file…';
-    pb.onclick = async () => { const r = await E.pickOverlay(); if (r?.path) { e.src = r.path; save(); renderInspector(); renderTimeline(); } };
-    pick.appendChild(pb); box.appendChild(pick);
-    box.appendChild(rowOf([
-      field('Start', e.start || 0, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
-      field('Dur', e.dur || 4, v => { e.dur = +v; save(); renderTimeline(); }, 'number'),
-    ]));
-    box.appendChild(rowOf([
-      field('X', e.x || 0, v => { e.x = +v; save(); }, 'number'),
-      field('Y', e.y || 0, v => { e.y = +v; save(); }, 'number'),
-    ]));
-    const en = document.createElement('div'); en.className = 'field';
-    const eb = document.createElement('button'); eb.textContent = e.enabled === false ? 'Enable' : 'Disable';
-    eb.onclick = () => { e.enabled = e.enabled === false; save(); renderInspector(); renderTimeline(); };
-    en.appendChild(eb); box.appendChild(en);
-  } else { // audio
-    box.appendChild(field('Source path', e.src, v => { e.src = v; save(); renderTimeline(); }));
-    box.appendChild(rowOf([
-      field('Start', e.start || 0, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
-      field('Dur', e.dur || 4, v => { e.dur = +v; save(); renderTimeline(); }, 'number'),
-      field('Gain dB', e.gain ?? -18, v => { e.gain = +v; save(); }, 'number'),
-    ]));
-    box.appendChild(rowOf([ field('Fade in', e.fadeIn || 0, v => { e.fadeIn = +v; save(); }, 'number'),
-      field('Fade out', e.fadeOut || 0, v => { e.fadeOut = +v; save(); }, 'number') ]));
-    box.appendChild(hint('Tip: ask Claude in the terminal to generate & add music/SFX (ElevenLabs), then it appears here to finalize.'));
+  const e = elemOf(sel);
+  $('#selBadge').textContent = e ? `${sel.kind} · ${fmt(e.start || 0)}` : 'nothing selected';
+  if (!e) {
+    box.innerHTML = '<div class="empty">Select a scene, caption, cut, overlay or audio layer on the timeline.</div>';
+    return;
   }
-  box.appendChild(hint('Edits save automatically. Use “Preview section” to render this spot, or “Export” for the full video.'));
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = sel.kind;
+  const when = document.createElement('span'); when.textContent = fmt(e.start || 0);
+  title.append(kind, when);
+  h.append(title, btn('Delete', remove, 'danger'));
+  box.appendChild(h);
+
+  if (sel.kind === 'caption') renderCaptionInspector(box, e);
+  else if (sel.kind === 'scene') renderSceneInspector(box, e);
+  else if (sel.kind === 'cut') renderCutInspector(box, e);
+  else if (sel.kind === 'overlay') renderOverlayInspector(box, e);
+  else renderAudioInspector(box, e);
 }
-function defaultsRow() {
-  const d = project.captions.defaults; const box = document.createElement('div');
-  box.appendChild(hint('All captions (defaults):'));
+
+function renderCaptionInspector(box, e) {
+  const wrap = document.createElement('div'); wrap.className = 'field';
+  const l = document.createElement('label'); l.textContent = 'Words — click to highlight, double-click to edit';
+  const toks = document.createElement('div'); toks.className = 'tokens';
+  e.tokens.forEach((tk) => {
+    const s = document.createElement('span');
+    s.className = 'tok' + (tk.e ? ' e' : ''); s.textContent = tk.t;
+    s.onclick = () => { tk.e = !tk.e; save(); renderInspector(); renderTimeline(); };
+    s.ondblclick = () => { const v = prompt('Edit word', tk.t); if (v != null) { tk.t = v; save(); renderInspector(); } };
+    toks.appendChild(s);
+  });
+  wrap.append(l, toks); box.appendChild(wrap);
+
+  box.appendChild(field('Full text', e.tokens.map((t) => t.t).join(' '), (v) => {
+    const ws = v.split(/\s+/).filter(Boolean);
+    e.tokens = ws.map((w, i) => ({ t: w, e: e.tokens[i]?.e || false }));
+    save(); renderTimeline();
+  }));
   box.appendChild(rowOf([
-    field('All Y pos', d.cy, v => { d.cy = +v; save(); }, 'number'),
-    field('All size', d.fontsize, v => { d.fontsize = +v; save(); }, 'number'),
-    field('All highlight', d.highlight, v => { d.highlight = v; save(); }),
+    field('Start', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('End', e.end, (v) => { e.end = +v; save(); renderTimeline(); }, 'number'),
   ]));
-  return box;
+
+  box.appendChild(sep());
+  box.appendChild(sechead('This cue only'));
+  const o = e.overrides = e.overrides || {};
+  const d = project.captions.defaults;
+  box.appendChild(rowOf([
+    field('Y pos', o.cy ?? d.cy, (v) => { o.cy = +v; save(); }, 'number'),
+    field('Size', o.fontsize ?? d.fontsize, (v) => { o.fontsize = +v; save(); }, 'number'),
+    field('Highlight', o.highlight ?? d.highlight, (v) => { o.highlight = v; save(); }),
+  ]));
+
+  box.appendChild(sep());
+  box.appendChild(sechead('All captions (defaults)'));
+  box.appendChild(rowOf([
+    field('All Y pos', d.cy, (v) => { d.cy = +v; save(); }, 'number'),
+    field('All size', d.fontsize, (v) => { d.fontsize = +v; save(); }, 'number'),
+    field('All highlight', d.highlight, (v) => { d.highlight = v; save(); }),
+  ]));
 }
-function rowOf(fields) { const r = document.createElement('div'); r.className = 'row'; fields.forEach(f => r.appendChild(f)); return r; }
-function hint(t) { const p = document.createElement('div'); p.className = 'small'; p.textContent = t; p.style.margin = '6px 0'; return p; }
+
+function renderSceneInspector(box, e) {
+  box.appendChild(field('Headline', e.headline, (v) => { e.headline = v; save(); renderTimeline(); }));
+  box.appendChild(rowOf([
+    field('Type', e.type, (v) => { e.type = v; save(); renderTimeline(); }),
+    field('Start', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Duration', e.dur, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  if (e.items) {
+    box.appendChild(field('Items — one per line, TEXT|colour',
+      e.items.map((it) => (typeof it === 'string' ? it : `${it.text}|${it.color || 'white'}`)).join('\n'),
+      (v) => {
+        e.items = v.split('\n').filter(Boolean).map((line) => {
+          const [t, c] = line.split('|');
+          return e.type === 'checklist' ? t.trim() : { text: t.trim(), color: (c || 'white').trim() };
+        });
+        save();
+      }, 'area'));
+  }
+  if (e.big != null) box.appendChild(field('Big text', e.big, (v) => { e.big = v; save(); }));
+  if (e.sub != null) box.appendChild(field('Sub', e.sub, (v) => { e.sub = v; save(); }));
+  if (e.target != null) box.appendChild(field('Counter target', e.target, (v) => { e.target = +v; save(); }, 'number'));
+  if (e.old != null) {
+    box.appendChild(field('Old (struck through)', e.old, (v) => { e.old = v; save(); }));
+    box.appendChild(field('New', e.new, (v) => { e.new = v; save(); }));
+  }
+  box.appendChild(btnRow(btn('Preview this scene', () => previewAround(e.start, e.dur))));
+}
+
+function renderCutInspector(box, e) {
+  box.appendChild(hint('This range is removed on Export — the video splices together and every caption, scene, overlay and audio layer after it shifts earlier. Preview shows the original timeline.'));
+  box.appendChild(rowOf([
+    field('Cut start', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Cut end', e.end, (v) => { e.end = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  box.appendChild(btnRow(
+    btn('Set start = playhead', () => { e.start = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
+    btn('Set end = playhead', () => { e.end = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
+  ));
+}
+
+function renderOverlayInspector(box, e) {
+  box.appendChild(hint('Any clip with an alpha channel — a HyperFrames render (--format mov), a PNG sequence, a transparent WebM — composited over the video for this window.'));
+  box.appendChild(field('Source', e.src, (v) => { e.src = v; save(); renderTimeline(); }));
+  box.appendChild(btnRow(
+    btn('Choose file…', async () => {
+      const r = await E.pickOverlay();
+      if (r?.path) { e.src = r.path; if (r.duration) e.dur = r.duration; save(); renderInspector(); renderTimeline(); }
+    }),
+    btn(e.enabled === false ? 'Enable' : 'Disable', () => { e.enabled = e.enabled === false; save(); renderInspector(); renderTimeline(); }),
+    btn('Preview here', () => previewAround(e.start || 0, e.dur || 4)),
+  ));
+  box.appendChild(rowOf([
+    field('Start', e.start || 0, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Duration', e.dur || 4, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  box.appendChild(rowOf([
+    field('X offset', e.x || 0, (v) => { e.x = +v; save(); }, 'number'),
+    field('Y offset', e.y || 0, (v) => { e.y = +v; save(); }, 'number'),
+  ]));
+}
+
+function renderAudioInspector(box, e) {
+  box.appendChild(field('Source path', e.src, (v) => { e.src = v; save(); renderTimeline(); }));
+  box.appendChild(rowOf([
+    field('Start', e.start || 0, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Duration', e.dur || 4, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+    field('Gain dB', e.gain ?? -18, (v) => { e.gain = +v; save(); }, 'number'),
+  ]));
+  box.appendChild(rowOf([
+    field('Fade in', e.fadeIn || 0, (v) => { e.fadeIn = +v; save(); }, 'number'),
+    field('Fade out', e.fadeOut || 0, (v) => { e.fadeOut = +v; save(); }, 'number'),
+  ]));
+  box.appendChild(hint('Layers are mixed under the voice and loudness-normalised on render. Ask Claude in the terminal to generate music or SFX and they appear here.'));
+}
+
 function remove() {
+  if (!sel) return;
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
@@ -255,91 +461,200 @@ function remove() {
   sel = null; save(); renderTimeline(); renderInspector();
 }
 
-// ---------- save (debounced) ----------
+// ---------------------------------------------------------------- save (debounced)
 let saveT, lastEdit = 0;
 function save() {
-  lastEdit = Date.now(); setStatus('● unsaved'); clearTimeout(saveT);
+  lastEdit = Date.now();
+  setStatus('Unsaved…');
+  clearTimeout(saveT);
   saveT = setTimeout(async () => {
     const r = await E.saveProject(project);
-    lastEdit = Date.now(); setStatus(r?.ok ? 'saved' : 'save failed: ' + (r?.error || ''));
+    lastEdit = Date.now();
+    setStatus(r?.ok ? 'Saved' : 'Save failed: ' + (r?.error || ''), r?.ok ? 'ok' : 'error');
   }, 400);
 }
 
-// ---------- add cut / audio ----------
-document.addEventListener('click', e => {
-  const k = e.target.dataset?.add; if (k) {
+// ---------------------------------------------------------------- add / generate
+document.addEventListener('click', (ev) => {
+  const k = ev.target.dataset?.add;
+  if (k) {
     if (!project) return;
-    if (k === 'overlay') {
-      E.pickOverlay().then(r => {
-        if (!r?.path) return;
-        project.overlays = project.overlays || [];
-        project.overlays.push({ id: 'ov' + Date.now(), src: r.path, start: +video.currentTime.toFixed(2), dur: r.duration || 4, x: 0, y: 0 });
-        save(); renderTimeline(); select('overlay', project.overlays.length - 1);
-      });
-      return;
-    }
-    if (k === 'cut') { project.cuts = project.cuts || []; const t = +video.currentTime.toFixed(2);
-      project.cuts.push({ start: t, end: Math.min(dur, t + 2) }); save(); renderTimeline(); select('cut', project.cuts.length - 1); return; }
-    project.audio = project.audio || { music: [], sfx: [] }; project.audio[k] = project.audio[k] || [];
-    project.audio[k].push({ id: k + Date.now(), src: '', start: Math.round(video.currentTime), dur: k === 'music' ? 30 : 1, gain: k === 'music' ? -18 : -6 });
-    save(); renderTimeline(); select(k, project.audio[k].length - 1); return;
+    if (k === 'overlay') return addOverlay();
+    if (k === 'cut') return addCut();
+    project.audio = project.audio || { music: [], sfx: [] };
+    project.audio[k] = project.audio[k] || [];
+    project.audio[k].push({
+      id: k + Date.now(), src: '', start: +(video.currentTime || 0).toFixed(2),
+      dur: k === 'music' ? 30 : 1, gain: k === 'music' ? -18 : -6,
+    });
+    save(); renderTimeline(); select(k, project.audio[k].length - 1);
+    return;
   }
-  if (e.target.dataset?.gen) genAudio();
+  if (ev.target.dataset?.gen) genAudio();
 });
-async function genAudio() {
-  const kind = prompt('Generate what? type: sfx | voice | music', 'sfx'); if (!kind) return;
-  const text = prompt(kind === 'voice' ? 'Voiceover text:' : 'Describe the ' + kind + ':', kind === 'sfx' ? 'whoosh transition' : ''); if (!text) return;
-  const at = +(kind === 'music' ? 0 : video.currentTime).toFixed(1);
-  setStatus('generating ' + kind + ' (ElevenLabs)…');
-  const r = await E.generateAudio({ kind, text, at });
-  if (r.ok) { setStatus(kind + ' added ✓'); await loadProject(); } else setStatus('audio gen failed: ' + String(r.error || '').slice(0, 80));
+
+function addCut() {
+  project.cuts = project.cuts || [];
+  const t = +(video.currentTime || 0).toFixed(2);
+  project.cuts.push({ start: t, end: Math.min(dur, t + 2) });
+  save(); renderTimeline(); select('cut', project.cuts.length - 1);
 }
 
-// ---------- render / export (utilityProcess + MessagePort progress) ----------
+async function addOverlay() {
+  const r = await E.pickOverlay();
+  if (!r?.path) return;
+  project.overlays = project.overlays || [];
+  project.overlays.push({
+    id: 'ov' + Date.now(), src: r.path, start: +(video.currentTime || 0).toFixed(2),
+    dur: r.duration || 4, x: 0, y: 0,
+  });
+  save(); renderTimeline(); select('overlay', project.overlays.length - 1);
+}
+
+async function genAudio() {
+  const kind = prompt('Generate what? sfx | voice | music', 'sfx');
+  if (!kind) return;
+  const text = prompt(kind === 'voice' ? 'Voiceover text:' : `Describe the ${kind}:`, kind === 'sfx' ? 'whoosh transition' : '');
+  if (!text) return;
+  const at = +(kind === 'music' ? 0 : video.currentTime).toFixed(1);
+  setStatus(`Generating ${kind} with ElevenLabs…`, 'working');
+  const r = await E.generateAudio({ kind, text, at });
+  if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
+  else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- render / export
 let offRender = null;
 function runRender({ range, out, label }) {
-  setStatus(label + '…'); busy(true);
+  setStatus(label + '…', 'working');
+  busy(true);
   offRender?.();
-  offRender = E.render.onEvent(m => {
+  offRender = E.render.onEvent((m) => {
     if (job && m.id !== job) return;
-    if (m.type === 'start') setStatus(`${label} — rendering ${m.span ? fmt(m.span) + ' of video' : ''}`);
-    if (m.type === 'progress') setStatus(`${label} — ${m.stage} ${m.pct}%`);
-    if (m.type === 'stall') setStatus(`${label} — no progress for ${Math.round(m.idleMs / 1000)}s (still waiting)`);
-    if (m.type === 'error') { finish(); setStatus(label + ' failed: ' + String(m.error).slice(0, 120)); }
+    if (m.type === 'progress') {
+      setStatus(`${label} — ${m.stage} ${m.pct}%`, 'working');
+      $('#progressBar').style.width = clamp(m.pct, 0, 100) + '%';
+    }
+    if (m.type === 'stall') setStatus(`${label} — no output for ${Math.round(m.idleMs / 1000)}s, still waiting`, 'working');
+    if (m.type === 'error') { finish(); setStatus(label + ' failed: ' + String(m.error).slice(0, 120), 'error'); }
     if (m.type === 'done') {
       finish();
-      if (m.code === 0) { setStatus(`${label} ✓ ${m.result?.duration ? '(' + (+m.result.duration).toFixed(1) + 's)' : ''}`); loadVideo(out.split('/').pop(), range ? range[0] : 0); }
-      else setStatus(`${label} failed (exit ${m.code}) — ${String(m.tail || '').slice(-160)}`);
+      if (m.code === 0) {
+        const secs = m.result?.duration ? ` (${(+m.result.duration).toFixed(1)}s)` : '';
+        setStatus(`${label} done${secs}`, 'ok');
+        loadVideo(out.split('/').pop(), range ? range[0] : 0);
+      } else setStatus(`${label} failed (exit ${m.code}) — ${String(m.tail || '').slice(-140)}`, 'error');
     }
   });
-  E.render.start({ out, range }).then(r => { job = r.id; });
+  E.render.start({ out, range }).then((r) => { job = r.id; });
+
   function finish() { busy(false); offRender?.(); offRender = null; job = null; }
 }
-function busy(on) { $('#btnPreview').disabled = $('#btnExport').disabled = on; $('#btnCancel').hidden = !on; }
-$('#btnCancel').onclick = () => { if (job) { E.render.cancel(job); setStatus('cancelling…'); } };
-$('#btnPreview').onclick = () => {
-  const e = elemOf(sel); const c = e ? (e.start || 0) : video.currentTime;
-  const a = Math.max(0, c - 2), b = c + ((e?.dur) || 8) + 2;
+function busy(on) {
+  $('#btnPreview').disabled = $('#btnExport').disabled = on;
+  $('#btnCancel').hidden = !on;
+  $('#progress').hidden = !on;
+  if (!on) $('#progressBar').style.width = '0%';
+}
+function previewAround(start, span) {
+  const a = Math.max(0, start - 2), b = Math.min(dur, start + (span || 8) + 2);
   runRender({ range: [+a.toFixed(1), +b.toFixed(1)], out: 'preview.mp4', label: 'Preview' });
+}
+$('#btnCancel').onclick = () => { if (job) { E.render.cancel(job); setStatus('Cancelling…', 'working'); } };
+$('#btnPreview').onclick = () => {
+  const e = elemOf(sel);
+  previewAround(e ? (e.start || 0) : video.currentTime, e?.dur);
 };
 $('#btnExport').onclick = () => runRender({ range: null, out: 'FINAL.mp4', label: 'Export' });
 
-// ---------- playhead ----------
-function tickPlayhead() { $('#playhead').style.left = (74 + t2x(video.currentTime || 0)) + 'px'; requestAnimationFrame(tickPlayhead); }
-$('#ruler').onclick = e => { const rect = e.currentTarget.getBoundingClientRect(); video.currentTime = x2t(e.clientX - rect.left); };
+// ---------------------------------------------------------------- keyboard
+function initKeys() {
+  document.addEventListener('keydown', (ev) => {
+    const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName) ||
+      document.activeElement?.closest?.('#terminal');
+    if (typing) return;
+    const frame = 1 / (fps || 30);
+    switch (ev.key) {
+      case ' ': ev.preventDefault(); video.paused ? video.play() : video.pause(); break;
+      case 'ArrowLeft': ev.preventDefault(); video.currentTime = clamp(video.currentTime - (ev.shiftKey ? 1 : frame), 0, dur); break;
+      case 'ArrowRight': ev.preventDefault(); video.currentTime = clamp(video.currentTime + (ev.shiftKey ? 1 : frame), 0, dur); break;
+      case 'Home': video.currentTime = 0; break;
+      case 'End': video.currentTime = Math.max(0, dur - 0.1); break;
+      case 's': case 'S': if (project) addCut(); break;
+      case 'Backspace': case 'Delete': if (sel) { ev.preventDefault(); remove(); } break;
+      case 'Escape': deselect(); break;
+      case '=': case '+': setZoom(zoom * 1.5); break;
+      case '-': case '_': setZoom(zoom / 1.5); break;
+      case 'f': case 'F': fitZoom(); renderTimeline(); break;
+      case 'p': case 'P': $('#btnPreview').click(); break;
+      case 'e': case 'E': $('#btnExport').click(); break;
+      default: return;
+    }
+  });
+}
 
-// ---------- terminal (node-pty lives in main; this is xterm + the bridge) ----------
+// ---------------------------------------------------------------- splitters
+function initSplitters() {
+  drag($('#splitTimeline'), 'y', (dy) => {
+    const p = $('#timelinePanel');
+    p.style.height = clamp(p.getBoundingClientRect().height + dy, 132, window.innerHeight - 260) + 'px';
+    renderTimeline();
+  });
+  drag($('#splitRail'), 'x', (dx) => {
+    const r = $('#rail');
+    r.style.width = clamp(r.getBoundingClientRect().width + dx, 260, window.innerWidth - 520) + 'px';
+    renderTimeline();
+  });
+  drag($('#splitTerm'), 'y', (dy) => {
+    const t = $('.term');
+    t.style.height = clamp(t.getBoundingClientRect().height + dy, 80, window.innerHeight - 220) + 'px';
+    window.dispatchEvent(new Event('resize'));
+  });
+}
+function drag(handle, axis, onDelta) {
+  if (!handle) return;
+  handle.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    let last = axis === 'x' ? ev.clientX : ev.clientY;
+    const move = (e) => {
+      const now = axis === 'x' ? e.clientX : e.clientY;
+      onDelta(last - now); last = now;
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  });
+}
+
+// ---------------------------------------------------------------- terminal
 async function initTerminal() {
-  if (!window.Terminal) { $('#terminal').textContent = 'terminal lib not loaded'; return; }
-  const term = new Terminal({ fontSize: 12, theme: { background: '#0b0c10' }, cursorBlink: true, allowProposedApi: true });
-  const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open($('#terminal')); fit.fit();
-  E.term.onData(d => { term.write(d); window.__cve.termLog = (window.__cve.termLog + d).slice(-8000); });
+  if (!window.Terminal) { $('#terminal').textContent = 'terminal library not loaded'; return; }
+  const term = new Terminal({
+    fontSize: 12, cursorBlink: true, allowProposedApi: true, fontFamily: 'SFMono-Regular, Menlo, monospace',
+    theme: { background: '#0b0c10', foreground: '#e7e9ee', cursor: '#c4d82e', selectionBackground: '#33405a' },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit); term.open($('#terminal')); fit.fit();
+  E.term.onData((d) => { term.write(d); window.__cve.termLog = (window.__cve.termLog + d).slice(-8000); });
   E.term.onExit(() => term.write('\r\n[shell exited]\r\n'));
-  term.onData(d => E.term.write(d));
+  term.onData((d) => E.term.write(d));
   const r = await E.term.start();
   if (!r?.ok) term.write('\r\n[terminal failed to start]\r\n');
-  const doFit = () => { fit.fit(); E.term.resize(term.cols, term.rows); };
-  doFit(); window.addEventListener('resize', doFit);
+  const doFit = () => { try { fit.fit(); E.term.resize(term.cols, term.rows); } catch {} };
+  doFit();
+  window.addEventListener('resize', doFit);
+  new ResizeObserver(doFit).observe($('#terminal'));
 }
-function fmt(t) { t = Math.max(0, Math.round(t)); return (t / 60 | 0) + ':' + String(t % 60).padStart(2, '0'); }
+
+// ---------------------------------------------------------------- utils
+function fmt(t) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+function fmtMs(t) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60), s = t % 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
 boot();
