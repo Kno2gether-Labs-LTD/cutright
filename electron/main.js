@@ -487,7 +487,7 @@ app.whenReady().then(async () => {
     const argOut = process.argv.find((a) => a.startsWith('--cve-out='));
     if (argOut) process.env.CVE_SMOKE_OUT = argOut.split('=')[1];
   }
-  if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings });
+  if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l) });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 

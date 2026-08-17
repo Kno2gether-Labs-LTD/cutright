@@ -77,3 +77,7 @@ color:var(--txt);border-radius:6px;padding:6px 8px;font-size:13px;font-family:in
   border: 1px solid #7a68e0; border-radius: 6px; font-size: 10px; padding: 3px 6px; overflow: hidden;
   white-space: nowrap; cursor: pointer; }
 .overlayclip.selected { outline: 2px solid #fff; }
+
+/* The `hidden` attribute is only a UA display:none — any author `display` rule beats it.
+   Make it explicit for every element we toggle with `hidden`. */
+[hidden] { display: none !important; }

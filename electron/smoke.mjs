@@ -12,12 +12,13 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // strip ANSI/OSC so we can assert on terminal text
 const strip = (t) => String(t).replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
 
-export async function run({ win, app, settings }) {
+export async function run({ win, app, settings, logToApp = () => {} }) {
   const want = String(process.env.CVE_SMOKE).split(',').map((s) => s.trim());
   const out = process.env.CVE_SMOKE_OUT || '/tmp/cve-smoke';
   try { mkdirSync(dirname(out), { recursive: true }); } catch {}
   const report = { started: new Date().toISOString(), workspace: settings.work, checks: {} };
-  const check = (k, v) => { report.checks[k] = v; console.log(`[smoke] ${k}:`, JSON.stringify(v)); };
+  const check = (k, v) => { report.checks[k] = v; const line = `[smoke] ${k}: ${JSON.stringify(v)}`;
+    console.log(line); try { logToApp(line); } catch {} };
 
   try {
     await new Promise((r) => win.webContents.once('did-finish-load', r));
@@ -30,6 +31,21 @@ export async function run({ win, app, settings }) {
       `({ sceneBlocks: document.querySelectorAll('#laneScenes .block').length, capTicks: document.querySelectorAll('#laneCaps .cap').length })`));
     check('video', await win.webContents.executeJavaScript(
       `(() => { const v = document.querySelector('#video'); return { src: (v.currentSrc||v.src).slice(0,60), readyState: v.readyState, duration: Math.round(v.duration||0), error: v.error?.code||null }; })()`));
+
+    // Layout/visibility: DOM tests pass on elements that are covered or display:none, so
+    // assert the real UI is actually on screen and nothing is sitting on top of it.
+    check('visibility', await win.webContents.executeJavaScript(`(() => {
+      const vis = (el) => { if (!el) return false; const r = el.getBoundingClientRect();
+        return r.width > 2 && r.height > 2 && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'; };
+      const at = (sel, dx = 5, dy = 5) => { const t = document.querySelector(sel)?.getBoundingClientRect();
+        if (!t) return 'missing'; const el = document.elementFromPoint(t.left + dx, t.top + dy);
+        return el ? (el.id || el.className || el.tagName) : 'none'; };
+      return { welcomeHidden: !vis(document.querySelector('#welcome')),
+               header: vis(document.querySelector('header')), timeline: vis(document.querySelector('#timeline')),
+               video: vis(document.querySelector('#video')), terminal: vis(document.querySelector('#terminal')),
+               inspector: vis(document.querySelector('#inspector')),
+               onTopOfTimeline: at('#laneScenes'), onTopOfVideo: at('#video', 30, 30) };
+    })()`));
 
     if (want.includes('term')) {
       // type an expression into the pty and read it back off the xterm buffer
@@ -74,6 +90,32 @@ export async function run({ win, app, settings }) {
       check('editSuite', { passed: r.passed, total: r.total,
         failures: r.results.filter((x) => !x.pass).map((x) => `${x.name}: ${x.error}`) });
       report.editResults = r.results;
+    }
+
+    if (want.includes('export')) {
+      // the real Export path: no range, cuts applied, straight through the UI's own call
+      const r = await win.webContents.executeJavaScript(`(async () => {
+        const events = []; const off = window.editor.render.onEvent(e => events.push(e));
+        const t0 = Date.now();
+        await window.editor.render.start({ out: 'FINAL_selftest.mp4', range: null });
+        const done = await new Promise(res => {
+          const iv = setInterval(() => {
+            const d = events.find(e => e.type === 'done' || e.type === 'error');
+            if (d) { clearInterval(iv); res(d); }
+            if (Date.now() - t0 > 1800000) { clearInterval(iv); res({ type: 'timeout' }); }
+          }, 500);
+        });
+        off();
+        return { done, seconds: Math.round((Date.now()-t0)/1000),
+                 stages: [...new Set(events.filter(e=>e.type==='progress').map(e=>e.stage))] };
+      })()`, true);
+      const p = JSON.parse(readFileSync(settings.work + '/project.json', 'utf8'));
+      const cutTotal = (p.cuts || []).reduce((a, c) => a + (c.end - c.start), 0);
+      const expected = p.meta.duration - cutTotal;
+      const got = parseFloat(r.done?.result?.duration || 0);
+      check('export', { ...r, expectedDuration: +expected.toFixed(2), gotDuration: got,
+        rippleExact: Math.abs(got - expected) < 0.1,
+        captions: r.done?.result?.captions, scenes: r.done?.result?.scenes, cuts: r.done?.result?.cuts_applied });
     }
 
     if (want.includes('cancel')) {
@@ -159,7 +201,11 @@ export async function run({ win, app, settings }) {
   report.finished = new Date().toISOString();
   const ok = !report.error
     && report.checks.project?.cues > 0
+    && report.checks.visibility?.welcomeHidden === true
+    && report.checks.visibility?.header === true && report.checks.visibility?.timeline === true
+    && report.checks.visibility?.video === true && report.checks.visibility?.terminal === true
     && (!want.includes('render') || report.checks.render?.done?.code === 0)
+    && (!want.includes('export') || (report.checks.export?.done?.code === 0 && report.checks.export?.rippleExact === true))
     && (!want.includes('cancel') || (report.checks.cancel?.working === true && report.checks.cancel?.strayProcesses === 0))
     && (!want.includes('audiogen') || report.checks.audioGen?.ok === true)
     && (!want.includes('edit') || report.checks.editSuite?.failures?.length === 0)

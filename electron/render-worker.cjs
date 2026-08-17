@@ -14,7 +14,7 @@ const STALL_WARN_MS = 90 * 1000;       // tell the UI we look stalled
 const HARD_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
 let port = null, child = null, job = null, tmpDir = null;
-let lastActivity = Date.now(), warned = false, ticker = null, finished = false;
+let lastActivity = Date.now(), warned = false, ticker = null, finished = false, cancelled = false;
 
 const post = (m) => { try { port?.postMessage(m); } catch {} };
 
@@ -110,7 +110,8 @@ function start(j) {
   child.on('close', (code) => {
     let result = null;
     try { result = JSON.parse(buf.trim().split('\n').pop()); } catch {}
-    if (code === 0) { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }
+    // keep the tmp dir only when it can still be useful: a genuine failure to debug
+    if (code === 0 || cancelled) { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }
     done({ type: 'done', code, out: job.out, result, tail: buf.slice(-800) });
   });
 
@@ -125,6 +126,7 @@ function start(j) {
 }
 
 function cancel() {
+  cancelled = true;
   if (!child) return;
   try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
 }
