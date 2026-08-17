@@ -8,7 +8,7 @@ queue. Each entry states what it extends, so none of it is a rewrite.
 > able to edit a *tutorial* (talking head + screen recording), which the data model cannot
 > represent yet. The novel ones (#6, #9) exist only because the edit is data.
 
-1. **Transcript editing** ✅ *(built — see `feat/transcript-edit`)* — delete words in a document view, the video cuts.
+1. **Transcript editing** ✅ **BUILT** *(branch `feat/transcript-edit`)* — delete words in a document view, the video cuts. Selection snaps into the gaps around the words, restore is exactly reversible, and a filler sweep is one click.
 2. **Multi-format export (16:9 → 9:16 / 1:1) with subject tracking** — one recording, every aspect ratio; crop follows the speaker, captions re-layout per format. Extends the engine with a crop stage + per-format caption overrides. Use OpenCV YuNet or MediaPipe (Apache-2.0) as a separate process — **not** `opencv-python` wheels, which bundle a GPL-configured ffmpeg. Effort L.
 3. **`clips[]` — a real B-roll / screen-recording track** — the biggest structural gap: `project.json` has exactly one video, so a tutorial (talking head + screen capture) cannot be edited, only decorated. One more composite stage in the engine, same `-itsoffset` + `enable='between(t,…)'` pattern as scenes/overlays. Effort M.
 4. **Incremental render cache** — re-encode only the chunks that changed (hash of range + look + cues + scenes + overlays); a one-word caption fix goes from ~10 min to ~40 s on a 31-minute video. Gate behind a checksum-parity test against a full render. Effort L.
