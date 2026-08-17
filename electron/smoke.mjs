@@ -208,6 +208,8 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
     }
     const panel = process.env.CVE_SMOKE_PANEL;
     if (panel) {
+      await win.webContents.executeJavaScript('hideHome()').catch(() => {});
+      await wait(300);
       const buttons = { transcript: '#btnTranscriptEdit', templates: '#btnTemplates',
                         autocut: '#btnAutoCut', look: '#btnLook' };
       const sel = buttons[panel];
