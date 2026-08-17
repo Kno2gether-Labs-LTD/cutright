@@ -312,3 +312,20 @@ button.accent:hover:not(:disabled) { background: #2e281c; border-color: #6a563a;
 select { font: inherit; font-size: 12px; color: var(--text); background: #0e1015;
   border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; width: 100%; }
 select:focus { outline: none; border-color: #46506a; }
+
+/* ---------------------------------------------------------------- transcript editor */
+.tx-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tx-doc {
+  font-size: 14px; line-height: 2.05; max-height: 52vh; overflow-y: auto; padding: 10px 12px;
+  background: #101319; border: 1px solid var(--line); border-radius: 10px; user-select: none;
+  -webkit-user-select: none;
+}
+.tx-w { padding: 2px 3px; border-radius: 4px; cursor: text; }
+.tx-w:hover { background: #23283a; }
+.tx-w.sel { background: var(--coral); color: #1a1a18; }
+.tx-w.cut { color: #5c6270; text-decoration: line-through; text-decoration-color: var(--coral); }
+.tx-w.cut.sel { background: #6b2018; color: #ffd9d2; }
+.tx-w.now { box-shadow: inset 0 -2px 0 var(--lime); }
+.tx-w.filler { color: #b98f4a; }
+.tx-gap { color: #3a404c; }
+.tx-stats { font-size: 11px; color: var(--dim); margin-top: 8px; }

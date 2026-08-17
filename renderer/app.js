@@ -13,7 +13,8 @@ const video = $('#video');
 // debug surface for the in-app tests (page data only)
 window.__cve = {
   get project() { return project; }, get status() { return $('#status').textContent; },
-  get zoom() { return zoom; }, loadVideo: (n, s) => loadVideo(n, s), termLog: '',
+  get zoom() { return zoom; }, get tx() { return { sel: tx.sel, open: tx.open, words: tx.words.length }; },
+  loadVideo: (n, s) => loadVideo(n, s), termLog: '',
 };
 
 // ---------------------------------------------------------------- boot
@@ -224,6 +225,7 @@ function tick() {
   if (t !== lastT) {
     lastT = t;
     positionPlayhead();
+    if (tx.open) highlightSpokenWord(t);
     // keep the playhead in view while playing
     const scroll = $('#tlScroll'), x = t2x(t);
     if (!video.paused && (x < scroll.scrollLeft + 20 || x > scroll.scrollLeft + scroll.clientWidth - 40)) {
@@ -266,6 +268,7 @@ function initTimelineInteraction() {
   $('#btnTranscribe').onclick = () => openTranscribePanel();
   $('#btnTemplates').onclick = () => openTemplatesPanel();
   $('#btnLook').onclick = () => openLookPanel();
+  $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -547,6 +550,195 @@ async function genAudio() {
   const r = await E.generateAudio({ kind, text, at });
   if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- transcript editor
+// Edit by reading: select words, press delete, and the video is cut there. Everything
+// downstream (captions, scenes, overlays, audio) re-times through the engine's remap, so
+// this is just a nicer way to author `cuts[]`.
+let tx = { words: [], sel: null, anchor: null, open: false, prevSrc: null, onlyCuts: false };
+
+async function openTranscriptEditor() {
+  if (!project) return;
+  const r = await E.getTranscript();
+  if (r.error) { setStatus(r.error, 'error'); return; }
+  tx.words = r.words;
+  tx.open = true;
+  // Transcript times are on the ORIGINAL timeline, so play the uncut master while editing.
+  tx.prevSrc = $('#previewTag').textContent;
+  loadVideo(project.meta.graded || 'graded_master.mp4', video.currentTime);
+  renderTranscriptPanel();
+}
+
+function closeTranscriptEditor() {
+  tx.open = false; tx.sel = null;
+  if (tx.prevSrc) loadVideo(tx.prevSrc, 0);
+  renderInspector();
+}
+
+const FILLER_WORDS = new Set(['um', 'uh', 'umm', 'uhh', 'erm', 'ehm', 'hmm', 'mmm', 'ah', 'er', 'uhm']);
+const inAnyCut = (w) => (project.cuts || []).some((c) => c.start <= (w.start + w.end) / 2 && (w.start + w.end) / 2 <= c.end);
+
+function renderTranscriptPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'transcript';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'transcript';
+  const when = document.createElement('span'); when.textContent = `${tx.words.length} words`;
+  title.append(kind, when);
+  h.append(title, btn('Close', closeTranscriptEditor));
+  box.appendChild(h);
+
+  const bar = document.createElement('div'); bar.className = 'tx-bar';
+  bar.append(
+    btn('Cut selection', cutSelection, 'danger'),
+    btn('Restore selection', restoreSelection),
+    btn('Cut all fillers', cutAllFillers),
+    btn(tx.onlyCuts ? 'Show all' : 'Show only cuts', () => { tx.onlyCuts = !tx.onlyCuts; renderTranscriptPanel(); }),
+  );
+  box.appendChild(bar);
+  box.appendChild(hint('Click a word to jump there. Drag (or shift-click) to select a phrase, then Cut — or press Delete. Struck-through words are already removed from the export; select them and Restore to bring them back.'));
+
+  const doc = document.createElement('div'); doc.className = 'tx-doc';
+  const frag = document.createDocumentFragment();
+  tx.words.forEach((w, i) => {
+    const cut = inAnyCut(w);
+    if (tx.onlyCuts && !cut) return;
+    const el = document.createElement('span');
+    const clean = w.text.toLowerCase().replace(/[^a-z']/g, '');
+    el.className = 'tx-w' + (cut ? ' cut' : '') + (FILLER_WORDS.has(clean) ? ' filler' : '')
+      + (tx.sel && i >= tx.sel[0] && i <= tx.sel[1] ? ' sel' : '');
+    el.textContent = w.text;
+    el.dataset.i = i;
+    frag.appendChild(el);
+    frag.appendChild(document.createTextNode(' '));
+    if (i + 1 < tx.words.length && tx.words[i + 1].start - w.end > 1.0) {
+      const gap = document.createElement('span'); gap.className = 'tx-gap';
+      gap.textContent = `[${(tx.words[i + 1].start - w.end).toFixed(1)}s] `;
+      frag.appendChild(gap);
+    }
+  });
+  doc.appendChild(frag);
+
+  let dragging = false;
+  doc.addEventListener('pointerdown', (ev) => {
+    if (!ev.target.classList?.contains('tx-w')) return;
+    const i = +ev.target.dataset.i;
+    if (ev.shiftKey && tx.anchor != null) tx.sel = [Math.min(tx.anchor, i), Math.max(tx.anchor, i)];
+    else { tx.anchor = i; tx.sel = [i, i]; video.currentTime = clamp(tx.words[i].start, 0, dur); }
+    dragging = true; paintSelection(doc);
+  });
+  doc.addEventListener('pointermove', (ev) => {
+    if (!dragging || !ev.target.classList?.contains('tx-w')) return;
+    const i = +ev.target.dataset.i;
+    if (Number.isNaN(i)) return;
+    tx.sel = [Math.min(tx.anchor, i), Math.max(tx.anchor, i)];
+    paintSelection(doc);
+  });
+  window.addEventListener('pointerup', () => { dragging = false; });
+  box.appendChild(doc);
+
+  const stats = document.createElement('div'); stats.className = 'tx-stats';
+  const removed = (project.cuts || []).reduce((a, c) => a + (c.end - c.start), 0);
+  const cutWords = tx.words.filter(inAnyCut).length;
+  stats.textContent = `${cutWords} words cut - ${removed.toFixed(1)}s removed - export runs ${fmt(Math.max(0, dur - removed))} (from ${fmt(dur)})`;
+  box.appendChild(stats);
+}
+
+function paintSelection(doc) {
+  const [a, b] = tx.sel || [-1, -1];
+  doc.querySelectorAll('.tx-w').forEach((el) => {
+    const i = +el.dataset.i;
+    el.classList.toggle('sel', i >= a && i <= b);
+  });
+}
+
+// A cut derived from words snaps outward into the silence around them, so we never clip
+// the tail of the previous word or the attack of the next one.
+function spanForSelection() {
+  if (!tx.sel) return null;
+  const [a, b] = tx.sel;
+  const first = tx.words[a], last = tx.words[b];
+  const prev = tx.words[a - 1], next = tx.words[b + 1];
+  const pad = 0.06;
+  const start = prev ? Math.max(prev.end + pad, first.start - 0.12) : Math.max(0, first.start - 0.12);
+  const end = next ? Math.min(next.start - pad, last.end + 0.12) : Math.min(dur, last.end + 0.12);
+  return end > start ? { start: +start.toFixed(2), end: +end.toFixed(2) } : null;
+}
+
+function mergeCuts() {
+  project.cuts.sort((x, y) => x.start - y.start);
+  const merged = [];
+  for (const c of project.cuts) {
+    const last = merged[merged.length - 1];
+    if (last && c.start <= last.end + 0.02) last.end = Math.max(last.end, c.end);
+    else merged.push({ ...c });
+  }
+  project.cuts = merged;
+}
+
+function cutSelection() {
+  const span = spanForSelection();
+  if (!span) { setStatus('Select some words first', 'error'); return; }
+  project.cuts = project.cuts || [];
+  project.cuts.push({ ...span, source: 'transcript' });
+  mergeCuts();
+  save(); renderTimeline(); renderTranscriptPanel();
+  setStatus(`Cut ${(span.end - span.start).toFixed(1)}s at ${fmt(span.start)}`, 'ok');
+}
+
+function restoreSelection() {
+  if (!tx.sel || !project.cuts?.length) return;
+  // Restore over the same gap-padded span the cut used, otherwise trimming leaves
+  // slivers of the old cut hanging in the silence either side (cut → restore must be
+  // exactly reversible).
+  const span = spanForSelection();
+  const s = span ? span.start : tx.words[tx.sel[0]].start;
+  const e = span ? span.end : tx.words[tx.sel[1]].end;
+  const kept = [];
+  project.cuts.forEach((c) => {
+    if (c.end <= s || c.start >= e) { kept.push(c); return; }
+    if (c.start < s - 0.01) kept.push({ ...c, end: Math.min(c.end, s) });
+    if (c.end > e + 0.01) kept.push({ ...c, start: Math.max(c.start, e) });
+  });
+  // anything left shorter than a frame or two is a leftover, not an edit
+  project.cuts = kept.filter((c) => c.end - c.start > 0.15);
+  save(); renderTimeline(); renderTranscriptPanel();
+  setStatus(`Restored ${fmt(s)} to ${fmt(e)}`, 'ok');
+}
+
+function cutAllFillers() {
+  const spans = [];
+  tx.words.forEach((w, i) => {
+    const clean = w.text.toLowerCase().replace(/[^a-z']/g, '');
+    if (!FILLER_WORDS.has(clean) || inAnyCut(w)) return;
+    const prev = tx.words[i - 1], next = tx.words[i + 1];
+    const start = prev ? Math.max(prev.end + 0.04, w.start - 0.1) : w.start;
+    const end = next ? Math.min(next.start - 0.04, w.end + 0.1) : w.end;
+    if (end > start) spans.push({ start: +start.toFixed(2), end: +end.toFixed(2), source: 'transcript:filler' });
+  });
+  if (!spans.length) { setStatus('No filler words left to cut', 'ok'); return; }
+  project.cuts = [...(project.cuts || []), ...spans];
+  mergeCuts();
+  save(); renderTimeline(); renderTranscriptPanel();
+  setStatus(`Cut ${spans.length} filler words`, 'ok');
+}
+
+let lastSpoken = -1;
+function highlightSpokenWord(t) {
+  const i = tx.words.findIndex((w) => t >= w.start && t <= w.end + 0.05);
+  if (i === lastSpoken) return;
+  lastSpoken = i;
+  const doc = $('.tx-doc'); if (!doc) return;
+  doc.querySelector('.tx-w.now')?.classList.remove('now');
+  if (i < 0) return;
+  const el = doc.querySelector(`.tx-w[data-i="${i}"]`);
+  if (!el) return;
+  el.classList.add('now');
+  const r = el.getBoundingClientRect(), dr = doc.getBoundingClientRect();
+  if (r.top < dr.top || r.bottom > dr.bottom) el.scrollIntoView({ block: 'center' });
 }
 
 // ---------------------------------------------------------------- look (film grade)
@@ -1003,7 +1195,10 @@ function initKeys() {
       case 'Home': video.currentTime = 0; break;
       case 'End': video.currentTime = Math.max(0, dur - 0.1); break;
       case 's': case 'S': if (project) addCut(); break;
-      case 'Backspace': case 'Delete': if (sel) { ev.preventDefault(); remove(); } break;
+      case 'Backspace': case 'Delete':
+        if (tx.open && tx.sel) { ev.preventDefault(); cutSelection(); }
+        else if (sel) { ev.preventDefault(); remove(); }
+        break;
       case 'Escape': deselect(); break;
       case '=': case '+': setZoom(zoom * 1.5); break;
       case '-': case '_': setZoom(zoom / 1.5); break;
@@ -1011,6 +1206,7 @@ function initKeys() {
       case 'a': case 'A': runAutoCut(); break;
       case 't': case 'T': openTemplatesPanel(); break;
       case 'l': case 'L': openLookPanel(); break;
+      case 'd': case 'D': openTranscriptEditor(); break;
       case 'p': case 'P': $('#btnPreview').click(); break;
       case 'e': case 'E': $('#btnExport').click(); break;
       default: return;

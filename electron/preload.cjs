@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('editor', {
   chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
   openWorkspace: (dir) => ipcRenderer.invoke('workspace:open', str(dir)),
   getProject: () => ipcRenderer.invoke('project:get'),
+  getTranscript: () => ipcRenderer.invoke('transcript:get'),
   saveProject: (p) => ipcRenderer.invoke('project:save', p),
   onProjectChanged: on(projectChanged),
   onWorkspaceChanged: on(workspaceChanged),

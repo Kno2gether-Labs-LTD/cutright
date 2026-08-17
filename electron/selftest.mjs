@@ -25,6 +25,20 @@ export async function runEditTests({ win, settings }) {
   };
   const expect = (cond, msg) => { if (!cond) throw new Error(msg); return true; };
 
+  // Writing project.json behind the UI's back is not enough: the renderer holds the
+  // project in memory and its next autosave would write the stale copy back. Wait past
+  // the anti-clobber window, then confirm the UI has actually reloaded.
+  const writeProject = async (obj) => {
+    await wait(3200);
+    writeFileSync(projectFile, JSON.stringify(obj, null, 2));
+    for (let i = 0; i < 20; i++) {
+      await wait(300);
+      const seen = await js(`JSON.stringify(window.__cve.project?.cuts || [])`);
+      if (seen === JSON.stringify(obj.cuts || [])) return true;
+    }
+    throw new Error('the UI did not pick up the restored project');
+  };
+
   // ---------------------------------------------------------------- selection
   await test('select a scene → inspector + playhead', async () => {
     const r = await js(`(() => {
@@ -245,8 +259,7 @@ export async function runEditTests({ win, settings }) {
     expect(disk().cuts.length === before + 1, 'S did not add a cut');
     expect(r.deselected, 'Escape did not clear the selection');
     // undo the test cut
-    const p = disk(); p.cuts.pop(); writeFileSync(projectFile, JSON.stringify(p, null, 2));
-    await wait(300);
+    const p = disk(); p.cuts.pop(); await writeProject(p);
     return r;
   });
 
@@ -263,6 +276,85 @@ export async function runEditTests({ win, settings }) {
     })()`);
     expect(r.w1 > r.w0 + 40, `rail did not widen: ${JSON.stringify(r)}`);
     return r;
+  });
+
+  // ---------------------------------------------------------------- transcript editing
+  await test('transcript editor: words render, selection cuts, restore brings it back', async () => {
+    const before = (disk().cuts || []).length;
+    const r = await js(`(async () => {
+      document.querySelector('#btnTranscriptEdit').click();
+      for (let i = 0; i < 40 && !document.querySelector('.tx-doc'); i++) await new Promise(r => setTimeout(r, 200));
+      const words = document.querySelectorAll('.tx-w').length;
+      const pick = (i) => document.querySelector('.tx-w[data-i="' + i + '"]');
+      // select words 40..44 by pointer, exactly as a user would
+      pick(40).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      pick(44).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      const selected = document.querySelectorAll('.tx-w.sel').length;
+      const w40 = window.__cve.project ? null : null;
+      [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Cut selection').click();
+      await new Promise(r => setTimeout(r, 900));
+      const struck = document.querySelectorAll('.tx-w.cut').length;
+      const playing = document.querySelector('#previewTag').textContent;
+      return { words, selected, struck, playing };
+    })()`, true);
+    await settle();
+    const after = disk().cuts || [];
+    expect(r.words > 100, 'the transcript did not render: ' + r.words);
+    expect(r.selected === 5, 'drag selection did not select 5 words: ' + r.selected);
+    expect(after.length > before, 'cutting the selection did not add a cut');
+    expect(after.some((c) => c.source === 'transcript'), 'the cut is not tagged as coming from the transcript');
+    expect(r.struck > 0, 'cut words are not struck through');
+    expect(/graded_master/.test(r.playing), 'the editor did not switch the player to the uncut master: ' + r.playing);
+
+    // the cut must sit in the gap around those words, never across a neighbouring word
+    const words = JSON.parse(readFileSync(settings.work + '/transcript.json', 'utf8'));
+    const made = after.find((c) => c.source === 'transcript');
+    const clipped = words.filter((w) => w.start < made.end - 0.02 && w.end > made.start + 0.02);
+    const expected = words.slice(40, 45).map((w) => w.text).join(' ');
+    expect(clipped.map((w) => w.text).join(' ') === expected,
+      `the cut spans the wrong words: "${clipped.map((w) => w.text).join(' ')}" vs "${expected}"`);
+
+    // restore
+    const dbg = await js(`(async () => {
+      const pick = (i) => document.querySelector('.tx-w[data-i="' + i + '"]');
+      pick(40).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      pick(44).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      const selBefore = window.__cve.tx.sel;
+      const cutsBefore = JSON.parse(JSON.stringify(window.__cve.project.cuts || []));
+      const b = [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Restore selection');
+      b.click();
+      await new Promise(r => setTimeout(r, 600));
+      return { selBefore, cutsBefore, cutsAfter: window.__cve.project.cuts || [], status: document.querySelector('#status').textContent };
+    })()`, true);
+    await settle();
+    expect((disk().cuts || []).length === before,
+      'restore did not remove the cut: ' + JSON.stringify(dbg).slice(0, 400));
+    return { words: r.words, cutSpan: made, restoredTo: before };
+  });
+
+  await test('transcript editor: "cut all fillers" only touches filler words', async () => {
+    const before = (disk().cuts || []).length;
+    const r = await js(`(async () => {
+      [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Cut all fillers').click();
+      await new Promise(r => setTimeout(r, 900));
+      return { status: document.querySelector('#status').textContent };
+    })()`, true);
+    await settle();
+    const after = disk().cuts || [];
+    const words = JSON.parse(readFileSync(settings.work + '/transcript.json', 'utf8'));
+    const FILLERS = new Set(['um', 'uh', 'umm', 'uhh', 'erm', 'ehm', 'hmm', 'mmm', 'ah', 'er', 'uhm']);
+    const newCuts = after.filter((c) => String(c.source || '').startsWith('transcript:filler'));
+    for (const c of newCuts) {
+      const inside = words.filter((w) => w.start < c.end - 0.02 && w.end > c.start + 0.02);
+      const nonFiller = inside.filter((w) => !FILLERS.has(w.text.toLowerCase().replace(/[^a-z']/g, '')));
+      expect(nonFiller.length === 0, `a filler cut swallowed real speech: ${nonFiller.map((w) => w.text).join(' ')}`);
+    }
+    // undo whatever it added
+    const p = disk(); p.cuts = (p.cuts || []).filter((c) => !String(c.source || '').startsWith('transcript:filler'));
+    await writeProject(p);
+    return { added: newCuts.length, status: r.status, before };
   });
 
   // ---------------------------------------------------------------- look + transitions
@@ -309,8 +401,7 @@ export async function runEditTests({ win, settings }) {
     expect(cut.transition === 'dip' && cut.tdur === 0.5, 'transition not saved: ' + JSON.stringify(cut));
     expect(r.options.includes('crossfade') && r.options.includes('whip'), 'transition types missing');
     // clean up the test cut
-    const p = disk(); p.cuts.pop(); writeFileSync(projectFile, JSON.stringify(p, null, 2));
-    await wait(300);
+    const p = disk(); p.cuts.pop(); await writeProject(p);
     return { cut, types: r.options.length };
   });
 

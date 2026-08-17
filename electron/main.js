@@ -578,6 +578,22 @@ function registerIpc() {
     return { ok: true, work: settings.work };
   });
 
+  // the word-level transcript backs the transcript editor and the auto-cut analysis
+  ipcMain.handle('transcript:get', () => {
+    if (!settings.work) return { error: 'no workspace open' };
+    const p = join(settings.work, 'transcript.json');
+    if (!existsSync(p)) return { error: 'no transcript.json — run Transcribe first' };
+    try {
+      const raw = JSON.parse(readFileSync(p, 'utf8'));
+      const list = Array.isArray(raw) ? raw : (raw.words || raw.transcript || []);
+      const words = list.map((w) => ({
+        text: String(w.text ?? w.word ?? '').trim(),
+        start: Number(w.start ?? w.from), end: Number(w.end ?? w.to),
+      })).filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end));
+      return { words };
+    } catch (e) { return { error: 'unreadable transcript.json: ' + e.message }; }
+  });
+
   ipcMain.handle('project:get', () => {
     if (!settings.work) return { error: 'no workspace open' };
     const p = projectPath();
