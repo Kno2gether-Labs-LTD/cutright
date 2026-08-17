@@ -4,7 +4,7 @@
 // Every feature the pre-Electron web app had is covered here, plus the ones Phase 0 added.
 // Run: CVE_SMOKE=ui,edit npm run smoke
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -940,6 +940,61 @@ export async function runEditTests({ win, settings }) {
       'Node primitives are reachable from the page: ' + JSON.stringify(r));
     return r;
   });
+
+  // ---------------------------------------------------------------- switching projects
+  await test('switching projects actually reloads the window onto the new project', async () => {
+    // This is the gap that let a broken reload ship: the old tests asserted the IPC
+    // returned ok, never that the UI ended up showing the other project.
+    const { mkdtempSync, rmSync, cpSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const other = join(mkdtempSync(join(tmpdir(), 'cve-switch-')), 'other_project');
+    cpSync(settings.work, other, { recursive: true });
+    // make it unmistakably different
+    const op = JSON.parse(readFileSync(join(other, 'project.json'), 'utf8'));
+    op.meta.title = 'THE OTHER PROJECT';
+    op.scenes = (op.scenes || []).slice(0, 1);
+    writeFileSync(join(other, 'project.json'), JSON.stringify(op, null, 2));
+
+    const before = await js(`(async () => ({ work: (await window.editor.config()).work,
+      scenes: window.__cve.project?.scenes?.length }))()`);
+    // reload happens under us, so wait for the page to come back with the new project
+    await js(`window.editor.openWorkspace(${JSON.stringify(other)}).then(r => r?.ok && window.editor.reload())`);
+    let after = null;
+    for (let i = 0; i < 40; i++) {
+      await wait(500);
+      try {
+        after = await js(`(async () => ({ work: (await window.editor.config()).work,
+          title: window.__cve.project?.meta?.title,
+          scenes: window.__cve.project?.scenes?.length,
+          ready: !!window.__cve.project }))()`);
+        if (after?.ready && after.work === other && after.title === 'THE OTHER PROJECT') break;
+      } catch { /* mid-reload */ }
+    }
+    expect(after?.work === other, `the app is still on ${after?.work} (wanted ${other})`);
+    expect(after?.title === 'THE OTHER PROJECT', 'the window did not reload onto the new project');
+    expect(after?.scenes === 1, `the timeline still shows the old project's scenes: ${after?.scenes}`);
+
+    // Put the original project back and PROVE it: leaving the app pointed at a temp
+    // folder would poison everything that runs afterwards.
+    let back = null;
+    for (let attempt = 0; attempt < 3 && back?.work !== settings.work; attempt++) {
+      await js(`(async () => { const r = await window.editor.openWorkspace(${JSON.stringify(settings.work)});
+        if (r?.ok) await window.editor.reload(); })()`).catch(() => {});
+      for (let i = 0; i < 40; i++) {
+        await wait(500);
+        try {
+          back = await js(`(async () => ({ work: (await window.editor.config()).work,
+            ready: !!window.__cve.project }))()`);
+          if (back?.ready && back.work === settings.work) break;
+        } catch { /* mid-reload */ }
+      }
+    }
+    expect(back?.work === settings.work,
+      `could not switch back to ${settings.work} (still on ${back?.work})`);
+    try { rmSync(dirname(other), { recursive: true, force: true }); } catch {}
+    return { from: before.work, to: other, scenesAfter: after?.scenes, restored: back.work };
+  });
+
 
   // restore the project exactly as we found it
   writeFileSync(projectFile, backup);

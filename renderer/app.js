@@ -70,7 +70,7 @@ async function openProjectMenu() {
   box.appendChild(btnRow(
     btn('Home', () => showHome()),
     btn('Start from a video…', () => openNewProject(), 'primary'),
-    btn('Open another project…', () => E.chooseWorkspace().then((r) => r?.ok && location.reload())),
+    btn('Open another project…', () => E.chooseWorkspace().then((r) => r?.ok && E.reload())),
     btn('Reveal in Finder', () => E.revealInFolder('project.json')),
   ));
 
@@ -81,7 +81,7 @@ async function openProjectMenu() {
     cfg.recent.filter((d) => d !== cfg.work).forEach((dir) => {
       const b = btn(dir.replace(/^.*\//, '') + '  —  ' + dir, async () => {
         const r = await E.openWorkspace(dir);
-        if (r?.ok) location.reload(); else setStatus(r?.error || 'could not open that folder', 'error');
+        if (r?.ok) E.reload(); else setStatus(r?.error || 'could not open that folder', 'error');
       });
       list.appendChild(b);
     });
@@ -93,12 +93,12 @@ async function openProjectMenu() {
 function showWelcome(cfg) {
   $('#welcome').hidden = false;
   $('#wNew').onclick = () => openNewProject();
-  $('#wOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
+  $('#wOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && E.reload());
   const box = $('#wRecent'); box.innerHTML = '';
   (cfg.recent || []).forEach((dir) => {
     const b = document.createElement('button');
     b.textContent = dir;
-    b.onclick = () => E.openWorkspace(dir).then((r) => r?.ok && location.reload());
+    b.onclick = () => E.openWorkspace(dir).then((r) => r?.ok && E.reload());
     box.appendChild(b);
   });
 }
@@ -656,7 +656,7 @@ async function showHome() {
       b.title = (i === 0 ? 'Continue editing — ' : '') + dir;
       b.onclick = async () => {
         const r = await E.openWorkspace(dir);
-        if (r?.ok) location.reload();
+        if (r?.ok) E.reload();
         else { pa.textContent = r?.error || 'could not open'; b.disabled = true; }
       };
       box.appendChild(b);
@@ -664,7 +664,7 @@ async function showHome() {
   }
 
   $('#homeNew').onclick = () => { $('#home').hidden = true; homeOpen = false; openNewProject(); };
-  $('#homeOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
+  $('#homeOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && E.reload());
   $('#homeTour').onclick = () => { $('#home').hidden = true; homeOpen = false; if (project) startTour(true); };
   $('#homeGuide').onclick = () => E.openGuide();
   $('#promoVisit').onclick = () => E.openExternal('https://viddescriptor.com');
@@ -823,6 +823,31 @@ function initNewProject() {
   $('#newproj').addEventListener('click', (ev) => { if (ev.target.id === 'newproj') closeNewProject(); });
 }
 
+// Show a failure inside the dialog (the status bar is hidden behind it) and always offer
+// a way out.
+function npFailed(headline, detail, workDir) {
+  $('#npStage').innerHTML = '';
+  const h = document.createElement('div');
+  h.style.cssText = 'color:#ff9c88;font-weight:600;margin-bottom:4px';
+  h.textContent = headline;
+  const d = document.createElement('div');
+  d.style.cssText = 'color:var(--dim);font-size:11px;white-space:pre-wrap;word-break:break-word';
+  d.textContent = String(detail).slice(0, 400);
+  $('#npStage').append(h, d);
+  if (workDir) {
+    const row = document.createElement('div'); row.className = 'btnrow'; row.style.marginTop = '10px';
+    row.append(
+      btn('Open it now', async () => {
+        const r = await E.newProject.adopt(workDir);
+        if (r?.ok) E.reload(); else npFailed('Still could not open it', r?.error || '', workDir);
+      }, 'primary'),
+      btn('Show in Finder', () => E.revealFolder(workDir)),
+    );
+    $('#npStage').appendChild(row);
+  }
+  setStatus(headline, 'error');
+}
+
 async function runNewProject() {
   if (np.busy || !np.source || !np.dest) return;
   np.busy = true;
@@ -840,15 +865,17 @@ async function runNewProject() {
     if (m.type === 'error') {
       np.busy = false; off();
       $('#npGo').disabled = false;
-      $('#npStage').textContent = 'Failed: ' + String(m.error).slice(0, 160);
-      setStatus('Could not create the project: ' + String(m.error).slice(0, 120), 'error');
+      npFailed('Could not build the project', String(m.error));
     }
     if (m.type === 'done') {
       np.busy = false; off();
-      $('#npStage').textContent = `Done — ${m.cues} captions, ${Math.round(m.duration)}s`;
+      $('#npStage').textContent = `Done — ${m.cues} captions, ${Math.round(m.duration)}s. Opening…`;
       const r = await E.newProject.adopt(m.work);
-      if (r?.ok) location.reload();
-      else setStatus('Project built at ' + m.work, 'ok');
+      if (r?.ok) { E.reload(); return; }
+      // The project exists on disk either way — never leave the user staring at a
+      // finished progress bar with no way forward.
+      npFailed('The project was built, but could not be opened automatically',
+        (r?.error || 'unknown reason') + '\n' + m.work, m.work);
     }
   });
 

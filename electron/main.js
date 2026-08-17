@@ -6,7 +6,7 @@
 // Security posture (do not loosen): contextIsolation:true, sandbox:true,
 // nodeIntegration:false, a narrow contextBridge (see preload.cjs) and a strict CSP.
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage } from 'electron';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -213,8 +213,16 @@ function createWindow() {
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     if (level >= 2) log('renderer-console', `[${level}] ${message} (${sourceId}:${line})`);
   });
-  // Never let the renderer navigate away or open arbitrary windows.
-  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  // Block navigation AWAY from the app, but never block the app reloading itself:
+  // will-navigate also fires for location.reload(), and preventing it silently broke
+  // every project switch (the window kept showing the old project forever).
+  const appUrl = pathToFileURL(indexHtml).toString();
+  win.webContents.on('will-navigate', (e, url) => {
+    const bare = String(url).split(/[?#]/)[0];
+    if (bare === appUrl) return;                 // our own page — a reload, allow it
+    log('blocked navigation to', url);
+    e.preventDefault();
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -688,6 +696,16 @@ function registerIpc() {
       return { words };
     } catch (e) { return { error: 'unreadable transcript.json: ' + e.message }; }
   });
+
+  // Renderer-initiated reloads are subject to the navigation guard; this one is not.
+  ipcMain.handle('shell:revealFolder', (_e, dir) => {
+    const d = String(dir || '');
+    if (d && existsSync(d)) { shell.openPath(d); return { ok: true }; }
+    return { ok: false };
+  });
+
+  ipcMain.handle('app:reload', () => { try { win?.webContents.reload(); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; } });
 
   ipcMain.handle('media:exists', (_e, name) => {
     if (!settings.work) return false;

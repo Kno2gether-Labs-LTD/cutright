@@ -30,28 +30,39 @@ login)
   ;;
 
 status)
-  if [ ! -d "$CFG" ]; then
-    echo "No project account yet. Run: ./scripts/gh-account.sh login"
-    echo
-    echo "This Mac's default account (unchanged either way):"
-    gh auth status 2>&1 | grep -E "Logged in|Active account" | sed 's/^/  /' || true
-    exit 0
+  # A half-finished login leaves the directory behind, so test for a real session
+  # rather than for the directory.
+  PROJECT_USER=""
+  if [ -d "$CFG" ]; then
+    PROJECT_USER=$(run api user --jq .login 2>/dev/null || true)
   fi
-  echo "Project account (this repo only)"
-  run auth status 2>&1 | sed 's/^/  /'
+
+  if [ -z "$PROJECT_USER" ]; then
+    echo "Project account: not signed in yet"
+    [ -d "$CFG" ] && echo "  (a config directory exists at $CFG but holds no session —"
+    [ -d "$CFG" ] && echo "   an interrupted login, or GitHub was unreachable at the time)"
+    echo
+    echo "  To sign in:  ./scripts/gh-account.sh login"
+  else
+    echo "Project account (this repo only): $PROJECT_USER"
+    run auth status 2>&1 | grep -E "Logged in|Token scopes" | sed 's/^/  /' || true
+    echo
+    echo "  organisations visible to it:"
+    ORGS=$(run api user/orgs --jq '.[].login' 2>/dev/null || true)
+    if [ -n "$ORGS" ]; then echo "$ORGS" | sed 's/^/    /'
+    else echo "    (none — either no org membership, or the token lacks read:org)"; fi
+  fi
+
   echo
-  echo "  organisations visible:"
-  run api user/orgs --jq '.[].login' 2>/dev/null | sed 's/^/    /' || echo "    (none — check the account has org membership)"
-  echo
-  echo "This Mac's default account (untouched)"
-  gh auth status 2>&1 | grep -E "Logged in|Active account" | sed 's/^/  /' || true
+  echo "This Mac's default account (untouched by any of this)"
+  gh auth status 2>&1 | grep -E "Logged in|Active account" | sed 's/^/  /' || echo "  (not signed in)"
   ;;
 
 git)
   # Per-repo credential helper: `git push` here uses the project account, every other repo
   # on this machine keeps using the default one. This lives in .git/config, not globally.
-  [ -d "$CFG" ] || { echo "run './scripts/gh-account.sh login' first"; exit 1; }
-  USER_NAME=$(run api user --jq .login)
+  USER_NAME=$(run api user --jq .login 2>/dev/null || true)
+  [ -n "$USER_NAME" ] || { echo "no project account yet — run: ./scripts/gh-account.sh login"; exit 1; }
   git config --local credential."https://github.com".helper \
     "!GH_CONFIG_DIR=$CFG gh auth git-credential"
   git config --local credential."https://github.com".username "$USER_NAME"

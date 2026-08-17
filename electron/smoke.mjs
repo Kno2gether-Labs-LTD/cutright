@@ -84,6 +84,17 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
       await wait(1500);
     }
 
+    if (want.includes('reload')) {
+      // does a page-initiated location.reload() actually happen, or is will-navigate eating it?
+      let fired = false;
+      const onLoad = () => { fired = true; };
+      win.webContents.on('did-finish-load', onLoad);
+      await win.webContents.executeJavaScript('location.reload()').catch(() => {});
+      await wait(3000);
+      win.webContents.off('did-finish-load', onLoad);
+      check('locationReload', { didReload: fired });
+    }
+
     if (want.includes('diag')) {
       // step-by-step trace of the caption edit path, to see exactly where a write is lost
       const trace = await win.webContents.executeJavaScript(`(async () => {
