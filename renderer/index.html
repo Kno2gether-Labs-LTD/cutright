@@ -9,6 +9,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cutright</title>
 <link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,6 +18,7 @@
   <div class="brand">
     <img src="logo.png" alt="" class="logomark">
     <span class="wordmark">Cutright</span>
+    <button id="btnHome" class="chip" title="Home (H)">Home</button>
     <button id="btnWorkspace" class="chip" title="Change workspace"><span id="work">—</span></button>
   </div>
   <div class="actions">
@@ -103,6 +105,81 @@
     </div>
   </aside>
 </main>
+
+<div id="home" class="home" hidden>
+  <div class="home-inner">
+    <div class="home-top">
+      <div class="home-brand">
+        <img src="logo.png" alt="">
+        <div>
+          <div class="home-name">Cutright</div>
+          <div class="home-by">by <a href="https://viddescriptor.com" id="homeBrandLink">Viddescriptor</a> — AI Media Studio</div>
+        </div>
+      </div>
+      <div class="btnrow" style="margin:0">
+        <button id="homeGuide">Getting started</button>
+        <button id="homeTour">Show me around</button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="hero-card">
+        <h2>Cut an hour of edit<br>down to minutes</h2>
+        <p>Drop in a recording. Cutright builds the master, writes the transcript, and lets you edit by
+          reading it — delete a sentence and the video cuts itself. Captions, cuts, motion graphics and
+          the grade all live in one file your AI agent can edit too.</p>
+        <div class="cta">
+          <button id="homeNew" class="primary">Start from a video</button>
+          <button id="homeOpen">Open a project…</button>
+        </div>
+      </div>
+
+      <div class="recent-card">
+        <h3>Recent projects</h3>
+        <div id="homeRecent" class="recent-list"></div>
+      </div>
+    </div>
+
+    <div class="feat-head">What it does</div>
+    <div class="feats">
+      <div class="feat"><span class="ic">✍️</span><h4>Edit by transcript</h4>
+        <p>Select a rambling sentence, press <kbd>⌫</kbd>. The cut ripples through every caption, scene and overlay.</p></div>
+      <div class="feat"><span class="ic">✂️</span><h4>Auto-cut</h4>
+        <p>Finds real dead air in the waveform plus “um”s and stutters. Hear each one before you accept it.</p></div>
+      <div class="feat"><span class="ic">💬</span><h4>Word-by-word captions</h4>
+        <p>Highlight styling per cue — position, size, colour, emoji. Rebuilt from the transcript in one click.</p></div>
+      <div class="feat"><span class="ic">✨</span><h4>Motion graphics</h4>
+        <p>Template packs bring lower thirds, title cards and callouts. Type your text, it renders onto the timeline.</p></div>
+      <div class="feat"><span class="ic">🎞️</span><h4>Looks &amp; transitions</h4>
+        <p>Film, teal &amp; orange, noir, VHS, grain and vignette — applied at render time, never baked in.</p></div>
+      <div class="feat"><span class="ic">🤖</span><h4>Your agent, in the app</h4>
+        <p>Run <code>claude</code> beside the timeline and ask for the edit in plain English. It changes the same project.</p></div>
+    </div>
+
+    <div class="promo">
+      <div class="tagline">From the makers · viddescriptor.com</div>
+      <h3>Need the footage itself?<br>Generate it.</h3>
+      <p>Viddescriptor is the AI Media Studio behind Cutright — generate images and video from a prompt,
+        bring a still photo to life, and build a whole shot list without a camera. Then bring it straight
+        back here to cut, caption and ship it.</p>
+      <div class="promo-grid">
+        <div class="promo-tile"><b>Text → video</b><span>Describe the shot, get the footage</span></div>
+        <div class="promo-tile"><b>Photo → motion</b><span>Bring a still to life</span></div>
+        <div class="promo-tile"><b>Characters</b><span>The same face across every scene</span></div>
+        <div class="promo-tile"><b>Brand kits</b><span>Your look, applied everywhere</span></div>
+      </div>
+      <div class="cta-row">
+        <button id="promoVisit" class="primary">Explore Viddescriptor</button>
+        <span class="note">Opens viddescriptor.com in your browser</span>
+      </div>
+    </div>
+
+    <div class="home-foot">
+      <span>Cutright — open source (Apache-2.0). Needs ffmpeg and Python 3 + Pillow.</span>
+      <span><a href="#" id="homeEnv">Check environment</a> · <a href="#" id="homeLogs">Open logs</a></span>
+    </div>
+  </div>
+</div>
 
 <div id="welcome" class="welcome" hidden>
   <div class="wbox">

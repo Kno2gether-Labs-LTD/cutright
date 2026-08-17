@@ -14,7 +14,7 @@
     "vendor": "node scripts/vendor.mjs",
     "rebuild": "electron-rebuild -f -w node-pty",
     "dev": "npm run vendor && electron .",
-    "smoke": "npm run vendor && CVE_SMOKE=ui,term,render CVE_SMOKE_OUT=./out/smoke electron .",
+    "smoke": "npm run vendor && CVE_SMOKE=ui,term,edit,render CVE_SMOKE_OUT=./out/smoke electron . --user-data-dir=/tmp/cutright-test-profile",
     "pack": "npm run vendor && electron-builder --dir",
     "dist": "npm run vendor && electron-builder --mac dmg --arm64",
     "dist:win": "npm run vendor && electron-builder --win nsis --x64",

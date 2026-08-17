@@ -10,6 +10,9 @@ Third-party components
 --------------------------------------------------------------------------------
 
 Bundled in the application:
+  Anton               SIL OFL 1.1     https://fonts.google.com/specimen/Anton
+  Archivo             SIL OFL 1.1     https://fonts.google.com/specimen/Archivo
+  JetBrains Mono      SIL OFL 1.1     https://github.com/JetBrains/JetBrainsMono
   Electron            MIT             https://github.com/electron/electron
   @xterm/xterm        MIT             https://github.com/xtermjs/xterm.js
   @xterm/addon-fit    MIT             https://github.com/xtermjs/xterm.js

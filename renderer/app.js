@@ -21,9 +21,14 @@ window.__cve = {
 async function boot() {
   const cfg = await E.config();
   WORK = cfg.work;
-  $('#work').textContent = cfg.work ? cfg.work.replace(/^.*\//, '') : 'no workspace';
-  $('#btnWorkspace').title = cfg.work || 'Choose a workspace';
-  if (!cfg.hasWorkspace) { showWelcome(cfg); initTerminal(); return; }
+  $('#work').textContent = cfg.work ? cfg.work.replace(/^.*\//, '') : 'no project';
+  $('#btnWorkspace').title = cfg.work || 'Choose a project';
+  initNewProject();
+
+  // No project yet → home is the whole app. With one, home sits on top until dismissed,
+  // so opening the app never dumps you into an edit you did not ask for.
+  if (!cfg.hasWorkspace) { await showHome(); initTerminal(); return; }
+  if (!cfg.skipHome) await showHome();
 
   await loadProject();
   loadVideo('FINAL.mp4');
@@ -40,8 +45,8 @@ async function boot() {
     WORK = w; $('#work').textContent = w.replace(/^.*\//, ''); sel = null;
     await loadProject(); loadVideo('FINAL.mp4');
   });
-  initNewProject();
   initTour();
+  $('#btnHome').onclick = () => showHome();
   $('#btnWorkspace').onclick = () => openProjectMenu();
 }
 
@@ -62,6 +67,7 @@ async function openProjectMenu() {
   box.appendChild(cur);
 
   box.appendChild(btnRow(
+    btn('Home', () => showHome()),
     btn('Start from a video…', () => openNewProject(), 'primary'),
     btn('Open another project…', () => E.chooseWorkspace().then((r) => r?.ok && location.reload())),
     btn('Reveal in Finder', () => E.revealInFolder('project.json')),
@@ -85,7 +91,6 @@ async function openProjectMenu() {
 
 function showWelcome(cfg) {
   $('#welcome').hidden = false;
-  initNewProject();
   $('#wNew').onclick = () => openNewProject();
   $('#wOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
   const box = $('#wRecent'); box.innerHTML = '';
@@ -608,6 +613,64 @@ async function genAudio() {
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
 }
 
+// ---------------------------------------------------------------- home
+// The app opens here, not on whatever was last edited: a project is a deliberate choice,
+// and this is also where the product explains itself.
+let homeOpen = false;
+
+async function showHome() {
+  const cfg = await E.config();
+  homeOpen = true;
+  $('#home').hidden = false;
+  $('#welcome').hidden = true;
+
+  const box = $('#homeRecent');
+  box.innerHTML = '';
+  const recents = (cfg.recent || []).filter(Boolean);
+  if (!recents.length) {
+    const d = document.createElement('div');
+    d.className = 'recent-empty';
+    d.textContent = 'Nothing yet. Start from a video and it will appear here.';
+    box.appendChild(d);
+  } else {
+    recents.forEach((dir, i) => {
+      const b = document.createElement('button');
+      b.className = 'recent-item';
+      const nm = document.createElement('span'); nm.className = 'rn';
+      nm.textContent = dir.replace(/\/+$/, '').split('/').pop();
+      const pa = document.createElement('span'); pa.className = 'rp'; pa.textContent = dir;
+      b.append(nm, pa);
+      b.title = (i === 0 ? 'Continue editing — ' : '') + dir;
+      b.onclick = async () => {
+        const r = await E.openWorkspace(dir);
+        if (r?.ok) location.reload();
+        else { pa.textContent = r?.error || 'could not open'; b.disabled = true; }
+      };
+      box.appendChild(b);
+    });
+  }
+
+  $('#homeNew').onclick = () => { $('#home').hidden = true; homeOpen = false; openNewProject(); };
+  $('#homeOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && location.reload());
+  $('#homeTour').onclick = () => { $('#home').hidden = true; homeOpen = false; if (project) startTour(true); };
+  $('#homeGuide').onclick = () => E.openGuide();
+  $('#promoVisit').onclick = () => E.openExternal('https://viddescriptor.com');
+  $('#homeBrandLink').onclick = (ev) => { ev.preventDefault(); E.openExternal('https://viddescriptor.com'); };
+  $('#homeEnv').onclick = async (ev) => {
+    ev.preventDefault();
+    const env = await E.checkEnvironment();
+    $('#homeEnv').textContent = env.ok ? 'Environment OK ✓'
+      : 'Missing: ' + env.missing.map((m) => m.tool).join(', ');
+  };
+  $('#homeLogs').onclick = (ev) => { ev.preventDefault(); E.openLogs(); };
+}
+
+function hideHome() {
+  if (!project) return;                 // nowhere to go back to
+  homeOpen = false;
+  $('#home').hidden = true;
+}
+
 // ---------------------------------------------------------------- guided tour
 // Shown once, replayable from Help. Each step spotlights a real element, so the tour can
 // never drift from the UI: if the selector stops matching, the step is skipped.
@@ -690,10 +753,11 @@ function initTour() {
     if (ev.key === 'ArrowRight' || ev.key === 'Enter') { ev.preventDefault(); stepTour(1); }
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); stepTour(-1); }
   }, true);
-  E.onShowTour?.(() => startTour(true));
+  E.onShowTour?.(() => { hideHome(); startTour(true); });
+  E.onShowHome?.(() => showHome());
   let seen = false;
   try { seen = localStorage.getItem('cutright.tourSeen') === '1'; } catch {}
-  if (!seen) setTimeout(() => startTour(true), 900);
+  if (!seen) setTimeout(() => { if (!homeOpen) startTour(true); }, 900);
 }
 
 // ---------------------------------------------------------------- new project
@@ -1328,7 +1392,8 @@ function renderAutoCutPanel() {
   autocut.proposals.forEach((p, i) => {
     const row = document.createElement('div'); row.className = 'ac-item';
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = p.take;
-    cb.onclick = (ev) => { ev.stopPropagation(); p.take = cb.checked; renderAutoCutPanel(); };
+    // update in place: re-rendering the whole list on every tick loses the user's scroll
+    cb.onclick = (ev) => { ev.stopPropagation(); p.take = cb.checked; refreshAutoCutTotals(); };
     const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(p.start);
     const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = p.label;
     const rsn = document.createElement('span'); rsn.className = 'rsn ' + p.reason; rsn.textContent = p.reason;
@@ -1342,13 +1407,30 @@ function renderAutoCutPanel() {
 
   const actions = document.createElement('div'); actions.className = 'btnrow';
   actions.append(
-    btn('Select all', () => { autocut.proposals.forEach((p) => { p.take = true; }); renderAutoCutPanel(); }),
-    btn('Select none', () => { autocut.proposals.forEach((p) => { p.take = false; }); renderAutoCutPanel(); }),
+    btn('Select all', () => { autocut.proposals.forEach((p) => { p.take = true; });
+      document.querySelectorAll('.ac-item input').forEach((c) => { c.checked = true; }); refreshAutoCutTotals(); }),
+    btn('Select none', () => { autocut.proposals.forEach((p) => { p.take = false; });
+      document.querySelectorAll('.ac-item input').forEach((c) => { c.checked = false; }); refreshAutoCutTotals(); }),
     btn(`Apply ${taken.length} cuts`, applyAutoCut, 'primary'),
   );
   wrap.appendChild(actions);
   wrap.appendChild(hint('Applying adds these to the Cuts track. Nothing is destroyed — remove any cut on the timeline to get the moment back. Export splices the video and re-times every caption, scene, overlay and audio layer.'));
   box.appendChild(wrap);
+}
+
+// Keep the summary and the Apply button honest without rebuilding the list.
+function refreshAutoCutTotals() {
+  const taken = autocut.proposals.filter((p) => p.take);
+  const removed = taken.reduce((a, p) => a + (p.end - p.start), 0);
+  const sum = $('#inspector .ac-summary');
+  if (sum) {
+    const st = autocut.stats || {};
+    sum.innerHTML = `Selected <b>${taken.length}</b> of ${autocut.proposals.length} · removes <b>${removed.toFixed(1)}s</b>` +
+      ` · new length <b>${fmt(Math.max(0, dur - removed))}</b> (from ${fmt(dur)})` +
+      `<br><span class="dim">${st.silences || 0} silences · ${st.words || 0} transcript words</span>`;
+  }
+  const apply = [...document.querySelectorAll('#inspector button')].find((b) => /^Apply/.test(b.textContent));
+  if (apply) { apply.textContent = `Apply ${taken.length} cuts`; apply.disabled = taken.length === 0; }
 }
 
 function applyAutoCut() {
@@ -1433,7 +1515,8 @@ function initKeys() {
         if (tx.open && tx.sel) { ev.preventDefault(); cutSelection(); }
         else if (sel) { ev.preventDefault(); remove(); }
         break;
-      case 'Escape': deselect(); break;
+      case 'Escape': if (homeOpen) hideHome(); else deselect(); break;
+      case 'h': case 'H': homeOpen ? hideHome() : showHome(); break;
       case '=': case '+': setZoom(zoom * 1.5); break;
       case '-': case '_': setZoom(zoom / 1.5); break;
       case 'f': case 'F': fitZoom(); renderTimeline(); break;

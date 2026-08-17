@@ -63,6 +63,9 @@ const ptyData = new Set(), ptyExit = new Set();
 ipcRenderer.on('pty:data', (_e, d) => { for (const cb of ptyData) { try { cb(String(d)); } catch {} } });
 ipcRenderer.on('pty:exit', () => { for (const cb of ptyExit) { try { cb(); } catch {} } });
 
+const homeShow = new Set();
+ipcRenderer.on('home:show', () => { for (const cb of homeShow) { try { cb(); } catch {} } });
+
 const tourShow = new Set();
 ipcRenderer.on('tour:show', () => { for (const cb of tourShow) { try { cb(); } catch {} } });
 
@@ -98,6 +101,10 @@ contextBridge.exposeInMainWorld('editor', {
   saveProject: (p) => ipcRenderer.invoke('project:save', p),
   onProjectChanged: on(projectChanged),
   onShowTour: on(tourShow),
+  onShowHome: on(homeShow),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', str(url)),
+  openGuide: () => ipcRenderer.invoke('shell:openGuide'),
+  openLogs: () => ipcRenderer.invoke('shell:openLogs'),
   onWorkspaceChanged: on(workspaceChanged),
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),

@@ -201,6 +201,11 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
         for (let i = 1; i < ${Number(process.env.CVE_SMOKE_TOUR) || 1}; i++) document.querySelector('#tourNext').click(); })()`);
       await wait(1200);
     }
+    if (process.env.CVE_SMOKE_SCROLL) {
+      await win.webContents.executeJavaScript(
+        `document.querySelector('#home')?.scrollTo({ top: ${Number(process.env.CVE_SMOKE_SCROLL)} })`);
+      await wait(700);
+    }
     const panel = process.env.CVE_SMOKE_PANEL;
     if (panel) {
       const buttons = { transcript: '#btnTranscriptEdit', templates: '#btnTemplates',

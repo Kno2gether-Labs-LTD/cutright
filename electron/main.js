@@ -343,14 +343,24 @@ async function checkEnvironment() {
 // ---------------------------------------------------------------- new project
 // The on-ramp: a raw recording in, a workspace out. Without this the app can only open
 // folders someone else prepared, which is the single least obvious thing about it.
+// Where a file dialog should start when we have no better idea: the user's home on
+// macOS/Linux, Documents on Windows (where recordings actually land there).
+function defaultBrowseDir() {
+  try {
+    return process.platform === 'win32' ? app.getPath('documents') : app.getPath('home');
+  } catch { return app.getPath('home'); }
+}
+
 async function pickVideo() {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choose a recording to edit',
+    defaultPath: settings.lastBrowseDir || defaultBrowseDir(),
     properties: ['openFile'],
     filters: [{ name: 'Video', extensions: ['mov', 'mp4', 'm4v', 'mkv', 'avi', 'webm', 'mpg', 'mpeg'] }],
   });
   if (r.canceled || !r.filePaths[0]) return { ok: false };
   const src = r.filePaths[0];
+  settings.lastBrowseDir = dirname(src); saveSettings();
   const base = basename(src).replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_');
   return { ok: true, source: src, suggestedDest: join(dirname(src), base + '_edit'), name: basename(src) };
 }
@@ -358,7 +368,8 @@ async function pickVideo() {
 async function pickFolder(defaultPath, title) {
   const r = await dialog.showOpenDialog(win, {
     title: title || 'Choose a folder',
-    defaultPath, properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Choose',
+    defaultPath: defaultPath || settings.lastBrowseDir || defaultBrowseDir(),
+    properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Choose',
   });
   return r.canceled || !r.filePaths[0] ? { ok: false } : { ok: true, dir: r.filePaths[0] };
 }
@@ -643,7 +654,8 @@ function registerIpc() {
   }));
 
   ipcMain.handle('workspace:choose', async () => {
-    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: settings.work });
+    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'],
+      defaultPath: settings.work || defaultBrowseDir(), title: 'Open a Cutright project folder' });
     if (r.canceled || !r.filePaths[0]) return { ok: false };
     setWorkspace(r.filePaths[0]);
     return { ok: true, work: settings.work };
@@ -689,6 +701,21 @@ function registerIpc() {
 
   ipcMain.handle('env:check', () => checkEnvironment());
   ipcMain.handle('analysis:autocut', (_e, o) => analyzeCuts(o || {}));
+  ipcMain.handle('shell:openExternal', (_e, url) => {
+    const u = String(url || '');
+    // only ever open a normal web link, and only one we recognise
+    if (/^https:\/\/(www\.)?(viddescriptor\.com|viddescriptor\.kno2gether\.com|kno2gether\.com)(\/|$)/.test(u)) {
+      shell.openExternal(u);
+      return { ok: true };
+    }
+    return { ok: false, error: 'blocked: ' + u };
+  });
+  ipcMain.handle('shell:openGuide', () => {
+    const guide = join(RES, 'docs/GETTING_STARTED.md');
+    if (existsSync(guide)) { shell.openPath(guide); return { ok: true }; }
+    return { ok: false };
+  });
+  ipcMain.handle('shell:openLogs', () => { try { shell.showItemInFolder(logPath); } catch {} return { ok: true }; });
   ipcMain.handle('project:pickVideo', () => pickVideo());
   ipcMain.handle('project:pickFolder', (_e, o) => pickFolder(o?.defaultPath, o?.title));
   ipcMain.handle('project:create', (e, o) => createProject(e.sender, o || {}));
@@ -761,6 +788,16 @@ function registerIpc() {
 process.on('uncaughtException', (e) => { try { log('UNCAUGHT', e?.stack || String(e)); } catch { console.error(e); } });
 process.on('unhandledRejection', (e) => { try { log('UNHANDLED-REJECTION', e?.stack || String(e)); } catch {} });
 
+// One instance per user-data directory. Two windows on the same project would fight over
+// project.json — each would save its own in-memory copy over the other's edits.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  });
+}
+
 app.whenReady().then(async () => {
   initLog();
   // Packaged GUI apps get a bare PATH (/usr/bin:/bin:…) — `claude`, `python3`, `ffmpeg`
@@ -802,7 +839,8 @@ function buildMenu() {
     ...(mac ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [
       { label: 'Open Workspace…', accelerator: 'CmdOrCtrl+O', click: async () => {
-        const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: settings.work });
+        const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'],
+          defaultPath: settings.work || defaultBrowseDir() });
         if (!r.canceled && r.filePaths[0]) { setWorkspace(r.filePaths[0]); win.webContents.send('workspace:changed', settings.work); }
       } },
       mac ? { role: 'close' } : { role: 'quit' },
@@ -811,6 +849,7 @@ function buildMenu() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [
+      { label: 'Home', accelerator: 'CmdOrCtrl+Shift+H', click: () => win?.webContents.send('home:show') },
       { label: 'Show Me Around (guided tour)', click: () => win?.webContents.send('tour:show') },
       { label: 'Getting Started Guide', click: () => {
         const guide = join(RES, 'docs/GETTING_STARTED.md');

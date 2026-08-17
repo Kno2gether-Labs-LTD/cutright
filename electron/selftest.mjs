@@ -246,6 +246,8 @@ export async function runEditTests({ win, settings }) {
   await test('keyboard: space plays, S cuts at the playhead, Esc deselects', async () => {
     const before = (disk().cuts || []).length;
     const r = await js(`(async () => {
+      hideHome();                       // Escape closes home first by design
+      await new Promise(r => setTimeout(r, 200));
       const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
       const v = document.querySelector('#video');
       v.currentTime = 30; key(' '); await new Promise(r => setTimeout(r, 400));
@@ -276,6 +278,59 @@ export async function runEditTests({ win, settings }) {
       return { w0, w1: rail.getBoundingClientRect().width };
     })()`);
     expect(r.w1 > r.w0 + 40, `rail did not widen: ${JSON.stringify(r)}`);
+    return r;
+  });
+
+  // ---------------------------------------------------------------- home
+  await test('home: shows recents, the feature grid and the brand promo', async () => {
+    const r = await js(`(async () => {
+      await showHome();
+      await new Promise(r => setTimeout(r, 300));
+      const visible = !document.querySelector('#home').hidden;
+      const recents = document.querySelectorAll('#homeRecent .recent-item').length;
+      const hero = document.querySelector('.hero h2')?.textContent?.trim().slice(0, 40);
+      const feats = document.querySelectorAll('.feat h4').length;
+      const promo = !!document.querySelector('.promo h3');
+      const brandFont = getComputedStyle(document.querySelector('.home-name')).fontFamily;
+      const accent = getComputedStyle(document.querySelector('#homeNew')).backgroundColor;
+      return { visible, recents, hero, feats, promo, brandFont, accent };
+    })()`, true);
+    expect(r.visible, 'home did not open');
+    expect(r.recents >= 1, 'the recent project was not listed');
+    expect(r.feats === 6, 'expected six feature cards, saw ' + r.feats);
+    expect(r.promo, 'the Viddescriptor promo section is missing');
+    expect(/Anton/.test(r.brandFont), 'the brand display font did not load: ' + r.brandFont);
+    return r;
+  });
+
+  await test('home: closes to the editor and reopens from the header', async () => {
+    const r = await js(`(async () => {
+      hideHome();
+      await new Promise(r => setTimeout(r, 200));
+      const closed = document.querySelector('#home').hidden;
+      const editorUsable = !!document.querySelector('#laneScenes .clip');
+      document.querySelector('#btnHome').click();
+      await new Promise(r => setTimeout(r, 400));
+      const reopened = !document.querySelector('#home').hidden;
+      hideHome();
+      await new Promise(r => setTimeout(r, 200));
+      return { closed, editorUsable, reopened };
+    })()`, true);
+    expect(r.closed, 'home did not close');
+    expect(r.editorUsable, 'the editor was not usable behind home');
+    expect(r.reopened, 'the Home button did not bring it back');
+    return r;
+  });
+
+  await test('home: the promo link can only open the brand site', async () => {
+    const r = await js(`(async () => {
+      const good = await window.editor.openExternal('https://viddescriptor.com');
+      const bad = await window.editor.openExternal('https://example.com/evil');
+      const worse = await window.editor.openExternal('file:///etc/passwd');
+      return { good, bad, worse };
+    })()`, true);
+    expect(r.good?.ok === true, 'the brand link was blocked');
+    expect(r.bad?.ok === false && r.worse?.ok === false, 'openExternal is not restricted: ' + JSON.stringify(r));
     return r;
   });
 
@@ -310,8 +365,9 @@ export async function runEditTests({ win, settings }) {
   });
 
   await test('onboarding: the empty inspector offers the four ways in', async () => {
-    const r = await js(`(() => {
-      window.__cve && (document.querySelector('#tlScroll').click());
+    const r = await js(`(async () => {
+      hideHome(); deselect();
+      await new Promise(r => setTimeout(r, 200));
       const labels = [...document.querySelectorAll('#inspector button')].map(b => b.textContent);
       return { labels };
     })()`, true);
@@ -727,24 +783,41 @@ export async function runEditTests({ win, settings }) {
   });
 
   await test('auto-cut: the panel applies selected cuts and merges overlaps', async () => {
+    const cutSeconds = (p) => (p.cuts || []).reduce((a, c) => a + (c.end - c.start), 0);
     const before = (disk().cuts || []).length;
+    const beforeSeconds = cutSeconds(disk());
     const r = await js(`(async () => {
       document.querySelector('#btnAutoCut').click();
       for (let i = 0; i < 60 && !document.querySelector('.ac-list'); i++) await new Promise(r => setTimeout(r, 500));
       const rows = document.querySelectorAll('.ac-item').length;
-      // take only the first two proposals
-      document.querySelectorAll('.ac-item input').forEach((cb, i) => { if (cb.checked !== (i < 2)) cb.click(); });
+      // Tick exactly the first two. Clicking a checkbox re-renders the panel, so drive it
+      // by index against a fresh query each time rather than over a stale NodeList.
+      const count = document.querySelectorAll('.ac-item input').length;
+      for (let i = 0; i < count; i++) {
+        const cb = document.querySelectorAll('.ac-item input')[i];
+        if (!cb) break;
+        if (cb.checked !== (i < 2)) cb.click();
+      }
+      const ticked = [...document.querySelectorAll('.ac-item input')].filter(c => c.checked).length;
       const apply = [...document.querySelectorAll('#inspector button')].find(b => /^Apply/.test(b.textContent));
-      const label = apply.textContent; apply.click();
-      return { rows, label };
+      const label = apply?.textContent;
+      const cutsBefore = (window.__cve.project.cuts || []).length;
+      apply?.click();
+      await new Promise(r => setTimeout(r, 500));
+      return { rows, ticked, label, cutsBefore, cutsAfter: (window.__cve.project.cuts || []).length,
+               status: document.querySelector('#status').textContent };
     })()`, true);
     await settle();
     const after = disk().cuts || [];
+    const afterSeconds = cutSeconds(disk());
     expect(r.rows > 0, 'the auto-cut panel listed no proposals');
-    expect(after.length > before, `cuts did not grow: ${before} → ${after.length}`);
+    // count can stay flat when a new cut merges into an existing one — removed TIME is the
+    // invariant that must grow
+    expect(afterSeconds > beforeSeconds + 0.01,
+      `applying removed no extra time: ${beforeSeconds.toFixed(2)}s → ${afterSeconds.toFixed(2)}s (${before} → ${after.length} cuts)`);
     expect(after.every((c, i) => i === 0 || c.start > after[i - 1].end), 'applied cuts overlap');
     expect(after.some((c) => String(c.source || '').startsWith('auto:')), 'applied cuts are not tagged with their source');
-    return { before, after: after.length, applied: r.label };
+    return { cuts: `${before} → ${after.length}`, seconds: `${beforeSeconds.toFixed(2)} → ${afterSeconds.toFixed(2)}`, applied: r.label };
   });
 
   // ---------------------------------------------------------------- agent loop

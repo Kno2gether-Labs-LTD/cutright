@@ -1,0 +1,9 @@
+/* Viddescriptor brand faces — Anton, Archivo and JetBrains Mono, all SIL Open Font
+   License 1.1, vendored so the app needs no network and the CSP can stay strict. */
+@font-face { font-family: 'Anton'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/anton-400.woff2') format('woff2'); }
+@font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/archivo-400.woff2') format('woff2'); }
+@font-face { font-family: 'Archivo'; font-style: normal; font-weight: 500; font-display: block; src: url('fonts/archivo-500.woff2') format('woff2'); }
+@font-face { font-family: 'Archivo'; font-style: normal; font-weight: 600; font-display: block; src: url('fonts/archivo-600.woff2') format('woff2'); }
+@font-face { font-family: 'Archivo'; font-style: normal; font-weight: 700; font-display: block; src: url('fonts/archivo-700.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/jetbrains-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: block; src: url('fonts/jetbrains-mono-500.woff2') format('woff2'); }
