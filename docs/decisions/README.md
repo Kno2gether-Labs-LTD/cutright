@@ -14,3 +14,6 @@ reverse it.
 | [0006](0006-overlays-via-hyperframes.md) | Motion graphics = `overlays[]` of alpha clips, authored in HyperFrames | Accepted 2026-08-17 |
 | [0007](0007-signing-and-updates.md) | macOS: sign+notarize when the cert exists. Windows: unsigned. Updates: GitHub Releases once public | Accepted 2026-08-17 |
 | [0008](0008-no-hardcoded-workspace.md) | No hard-coded workspace; welcome screen + recents; workspace-scoped file access | Accepted 2026-08-17 |
+| [0009](0009-auto-cut-signals.md) | Auto-cut trusts the measured audio; the transcript finds fillers, it does not veto silences | Accepted 2026-08-17 |
+| [0010](0010-transitions-and-look.md) | Transitions live on cuts (xfade, timeline re-timed); film looks applied at render time | Accepted 2026-08-17 |
+| [0011](0011-templates-two-engines.md) | Template packs = data + compositions; HyperFrames bundled, Remotion user-installed | Accepted 2026-08-17 |
