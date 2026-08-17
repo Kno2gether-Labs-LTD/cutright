@@ -14,7 +14,8 @@
     "smoke": "npm run vendor && CVE_SMOKE=ui,term,render CVE_SMOKE_OUT=./out/smoke electron .",
     "pack": "npm run vendor && electron-builder --dir",
     "dist": "npm run vendor && electron-builder --mac dmg --arm64",
-    "dist:win": "npm run vendor && electron-builder --win nsis --x64"
+    "dist:win": "npm run vendor && electron-builder --win nsis --x64",
+    "sync-engine": "node scripts/sync-engine.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -38,13 +39,17 @@
     "files": [
       "electron/**/*",
       "renderer/**/*",
+      "engine/**/*",
+      "templates/**/*",
       "schema/**/*",
       "package.json",
       "!**/*.map"
     ],
     "asar": true,
     "asarUnpack": [
-      "**/node_modules/node-pty/**/*"
+      "**/node_modules/node-pty/**/*",
+      "engine/**/*",
+      "templates/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",

@@ -59,8 +59,9 @@ const DEFAULTS = {
   // No hard-coded workspace: on first run the app asks for one (welcome state).
   work: process.env.WORK || '',
   recent: [],
-  // The render/audio engine still lives in the `video-edit` skill (Python, Phase 4 ports it to Node).
-  engine: process.env.ENGINE || join(app.getPath('home'), '.claude/skills/video-edit/scripts'),
+  // The render engine ships with the app (engine/). The video-edit skill keeps its own
+  // copy for standalone use; ENGINE= overrides both.
+  engine: process.env.ENGINE || join(ROOT, 'engine'),
   python: process.env.PYTHON || 'python3',
 };
 let settingsPath = null, settings = { ...DEFAULTS };
