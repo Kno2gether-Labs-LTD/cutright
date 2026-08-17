@@ -57,12 +57,21 @@ async function renderPreset(job) {
   mkdirSync(dirname(outPath), { recursive: true });
 
   if (engine === 'remotion') {
-    const entry = remotionEntry || join(templateDir, 'remotion/src/index.ts');
+    // manifests give a path relative to the template, so always resolve against it
+    const rel = remotionEntry || 'remotion/src/index.ts';
+    const entry = rel.startsWith('/') ? rel : join(templateDir, rel);
     if (!existsSync(entry)) throw new Error('remotion entry not found: ' + entry);
-    progress('bundling the Remotion project (first run downloads packages)');
-    await run('npx', ['--yes', 'remotion', 'render', entry, remotionId || composition, outPath,
-      '--codec', 'prores', '--prores-profile', '4444', '--props', JSON.stringify(vars),
-      '--log', 'info'], { cwd: templateDir });
+    progress('bundling the Remotion project');
+    // Remotion only writes an alpha channel when the frames are PNG *and* the pixel
+    // format is a yuva one — with just --prores-profile 4444 it silently emits opaque
+    // yuv422p12le, which would composite as a black rectangle.
+    const local = join(dirname(entry), '..', 'node_modules/.bin/remotion');
+    const bin = existsSync(local) ? local : 'npx';
+    const pre = existsSync(local) ? [] : ['--yes', 'remotion'];
+    await run(bin, [...pre, 'render', entry, remotionId || composition, outPath,
+      '--codec', 'prores', '--prores-profile', '4444',
+      '--image-format', 'png', '--pixel-format', 'yuva444p10le',
+      '--props', JSON.stringify(vars)], { cwd: join(dirname(entry), '..') });
   } else {
     const comp = join(templateDir, composition);
     if (!existsSync(comp)) throw new Error('composition not found: ' + comp);

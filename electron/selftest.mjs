@@ -328,6 +328,34 @@ export async function runEditTests({ win, settings }) {
              fromMb: +(r.done.originalBytes / 1e6).toFixed(2), duration: r.done.duration };
   });
 
+  await test('templates: a user-installed Remotion pack renders with alpha too', async () => {
+    const list = await js(`window.editor.templates.list()`, true);
+    const neon = list.find((t) => t.id === 'remotion-neon');
+    if (!neon) return { skipped: 'remotion-neon template not installed' };
+    expect(neon.builtin === false, 'the user template was not detected as user-installed');
+    const r = await js(`(async () => {
+      const events = []; const off = window.editor.templates.onEvent(e => events.push(e));
+      const t0 = Date.now();
+      await window.editor.templates.renderPreset({ template: 'remotion-neon', preset: 'neon-lower-third',
+        vars: { title: 'REMOTION OK', sub: 'second engine' }, fps: 30 });
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+          if (Date.now() - t0 > 900000) { clearInterval(iv); res({ type: 'timeout' }); }
+        }, 500);
+      });
+      off();
+      return { done, seconds: Math.round((Date.now() - t0) / 1000) };
+    })()`, true);
+    expect(r.done?.type === 'done', 'remotion render failed: ' + JSON.stringify(r.done).slice(0, 220));
+    const { execFileSync } = await import('node:child_process');
+    const px = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=pix_fmt,codec_name', '-of', 'csv=p=0', r.done.path], { encoding: 'utf8' }).trim();
+    expect(/argb|rgba|yuva|4444/.test(px), 'the Remotion preset has no alpha: ' + px);
+    return { engine: 'remotion', seconds: r.seconds, pix: px, mb: +(r.done.bytes / 1e6).toFixed(2) };
+  });
+
   // ---------------------------------------------------------------- transcription
   await test('transcribe: engines are detected and the panel opens', async () => {
     const r = await js(`(async () => {
