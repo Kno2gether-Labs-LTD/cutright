@@ -5,7 +5,7 @@
 //
 // Security posture (do not loosen): contextIsolation:true, sandbox:true,
 // nodeIntegration:false, a narrow contextBridge (see preload.cjs) and a strict CSP.
-import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, watch, statSync, createReadStream } from 'node:fs';
@@ -308,6 +308,63 @@ async function checkEnvironment() {
   return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
 }
 
+// ---------------------------------------------------------------- API keys
+// Remote transcription needs a key. It is encrypted with the OS keychain (safeStorage)
+// and only ever leaves main to go to the provider — never to the renderer.
+function setApiKey(provider, value) {
+  settings.keys = settings.keys || {};
+  if (!value) { delete settings.keys[provider]; saveSettings(); return { ok: true, cleared: true }; }
+  try {
+    settings.keys[provider] = safeStorage.isEncryptionAvailable()
+      ? { enc: safeStorage.encryptString(value).toString('base64') }
+      : { plain: value };            // no keychain (rare): still works, clearly marked
+    saveSettings();
+    return { ok: true, encrypted: !!settings.keys[provider].enc };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+function getApiKey(provider) {
+  const k = settings.keys?.[provider];
+  if (!k) return process.env[provider === 'openai' ? 'OPENAI_API_KEY' : 'ELEVENLABS_API_KEY'] || '';
+  if (k.plain) return k.plain;
+  try { return safeStorage.decryptString(Buffer.from(k.enc, 'base64')); } catch { return ''; }
+}
+const knownKeys = () => ({
+  openai: !!getApiKey('openai'), elevenlabs: !!getApiKey('elevenlabs'),
+  keychain: safeStorage.isEncryptionAvailable(),
+});
+
+// ---------------------------------------------------------------- transcription
+function transcribeMedia(webContents, opts = {}) {
+  if (!settings.work) return { error: 'no workspace open' };
+  let project = {};
+  try { project = JSON.parse(readFileSync(projectPath(), 'utf8')); } catch { /* a project is optional for transcribing */ }
+
+  const child = utilityProcess.fork(join(__dir, 'transcribe-worker.cjs'), [], {
+    serviceName: 'cve-transcribe', stdio: 'pipe', env: { ...process.env },
+  });
+  const id = 'stt' + Date.now();
+  const { port1, port2 } = new MessageChannelMain();
+  child.postMessage({ type: 'port' }, [port1]);
+  webContents.postMessage('transcribe:port', { id }, [port2]);
+
+  child.stderr?.on('data', (d) => log('[stt!]', d.toString().trim().slice(0, 300)));
+  child.stdout?.on('data', (d) => log('[stt]', d.toString().trim().slice(0, 300)));
+
+  const engine = String(opts.engine || 'hyperframes');
+  child.postMessage({ type: 'transcribe', job: {
+    work: settings.work,
+    media: opts.media || project?.meta?.graded || 'graded_master.mp4',
+    engine,
+    model: opts.model || '',
+    language: opts.language || '',
+    modelPath: opts.modelPath || '',
+    rebuildCaptions: opts.rebuildCaptions !== false,
+    wordsPerCue: Number(opts.wordsPerCue || 3),
+    apiKey: engine === 'openai' ? getApiKey('openai') : engine === 'elevenlabs' ? getApiKey('elevenlabs') : '',
+  } });
+  return { id };
+}
+
 // ---------------------------------------------------------------- analysis (auto-cut)
 // Runs in its own utilityProcess: it shells out to ffmpeg, so it must not sit on main.
 function analyzeCuts(opts = {}) {
@@ -459,6 +516,16 @@ function registerIpc() {
 
   ipcMain.handle('env:check', () => checkEnvironment());
   ipcMain.handle('analysis:autocut', (_e, o) => analyzeCuts(o || {}));
+  ipcMain.handle('stt:start', (e, o) => transcribeMedia(e.sender, o || {}));
+  ipcMain.handle('stt:engines', async () => {
+    const has = (b) => !!which(b);
+    return {
+      hyperframes: has('npx'), 'whisper-cli': has('whisper-cli'),
+      openai: !!getApiKey('openai'), elevenlabs: !!getApiKey('elevenlabs'),
+      keys: knownKeys(),
+    };
+  });
+  ipcMain.handle('keys:set', (_e, { provider, value }) => setApiKey(String(provider), String(value || '')));
 
   // Pick an overlay clip (HyperFrames MOV/WebM with alpha, or a PNG sequence's first frame).
   ipcMain.handle('overlay:pick', async () => {

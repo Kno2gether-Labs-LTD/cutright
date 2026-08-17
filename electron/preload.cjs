@@ -23,6 +23,20 @@ ipcRenderer.on('render:port', (e, { id }) => {
   port.start();
 });
 
+// transcription progress rides its own MessagePort, like renders do
+const sttListeners = new Set();
+const sttPorts = new Map();
+ipcRenderer.on('transcribe:port', (e, { id }) => {
+  const port = e.ports[0];
+  sttPorts.set(id, port);
+  port.onmessage = (ev) => {
+    const msg = { id, ...ev.data };
+    if (msg.type === 'done' || msg.type === 'error') { try { port.close(); } catch {} sttPorts.delete(id); }
+    for (const cb of sttListeners) { try { cb(msg); } catch {} }
+  };
+  port.start();
+});
+
 const ptyData = new Set(), ptyExit = new Set();
 ipcRenderer.on('pty:data', (_e, d) => { for (const cb of ptyData) { try { cb(String(d)); } catch {} } });
 ipcRenderer.on('pty:exit', () => { for (const cb of ptyExit) { try { cb(); } catch {} } });
@@ -50,6 +64,16 @@ contextBridge.exposeInMainWorld('editor', {
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),
   pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
+  transcribe: {
+    start: (o = {}) => ipcRenderer.invoke('stt:start', {
+      engine: str(o.engine), model: str(o.model), language: str(o.language),
+      modelPath: str(o.modelPath), rebuildCaptions: o.rebuildCaptions !== false,
+      wordsPerCue: num(o.wordsPerCue, 3), media: str(o.media),
+    }),
+    engines: () => ipcRenderer.invoke('stt:engines'),
+    setKey: (provider, value) => ipcRenderer.invoke('keys:set', { provider: str(provider), value: str(value) }),
+    onEvent: on(sttListeners),
+  },
   autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
     noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,

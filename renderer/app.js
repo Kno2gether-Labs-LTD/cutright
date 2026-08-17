@@ -263,6 +263,7 @@ function initTimelineInteraction() {
   $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
   $('#btnFit').onclick = () => { fitZoom(); renderTimeline(); $('#tlScroll').scrollLeft = 0; };
   $('#btnAutoCut').onclick = () => runAutoCut();
+  $('#btnTranscribe').onclick = () => openTranscribePanel();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -522,6 +523,113 @@ async function genAudio() {
   const r = await E.generateAudio({ kind, text, at });
   if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+}
+
+// ---------------------------------------------------------------- transcription
+// Captions and auto-cut both live off transcript.json. This panel (re)builds it with a
+// local engine by default; remote engines are available when a key is stored.
+let stt = { engines: null, opts: { engine: 'hyperframes', model: 'small.en', language: '', rebuildCaptions: true, wordsPerCue: 3 }, busy: false, log: [] };
+
+async function openTranscribePanel() {
+  stt.engines = await E.transcribe.engines();
+  renderTranscribePanel();
+}
+
+function renderTranscribePanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'transcribe';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'transcribe';
+  title.append(kind);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  box.appendChild(hint('Rebuilds transcript.json (word-level), which drives both the captions and the auto-cut analysis. The previous transcript and project are kept as *.prev.json.'));
+
+  const eng = stt.engines || {};
+  const options = [
+    ['hyperframes', 'Whisper (local, recommended)', eng.hyperframes],
+    ['whisper-cli', 'whisper.cpp (local, own model)', eng['whisper-cli']],
+    ['openai', 'OpenAI (remote, needs key)', eng.openai],
+    ['elevenlabs', 'ElevenLabs Scribe (remote, needs key)', eng.elevenlabs],
+  ];
+  const pick = document.createElement('div'); pick.className = 'btnrow';
+  options.forEach(([id, label, available]) => {
+    const b = btn((stt.opts.engine === id ? '● ' : '○ ') + label, () => { stt.opts.engine = id; renderTranscribePanel(); });
+    if (!available) { b.disabled = true; b.title = id === 'openai' || id === 'elevenlabs' ? 'Add an API key below' : 'Not installed'; }
+    if (stt.opts.engine === id) b.classList.add('primary');
+    pick.appendChild(b);
+  });
+  box.appendChild(pick);
+
+  box.appendChild(rowOf([
+    field('Model', stt.opts.model, (v) => { stt.opts.model = v; }),
+    field('Language (blank = auto)', stt.opts.language, (v) => { stt.opts.language = v; }),
+    field('Words per caption', stt.opts.wordsPerCue, (v) => { stt.opts.wordsPerCue = +v || 3; }, 'number'),
+  ]));
+
+  const flags = document.createElement('div'); flags.className = 'btnrow';
+  flags.append(btn(`${stt.opts.rebuildCaptions ? '✓' : '✗'} rebuild captions from the new transcript`,
+    () => { stt.opts.rebuildCaptions = !stt.opts.rebuildCaptions; renderTranscribePanel(); }));
+  box.appendChild(flags);
+
+  // API keys (stored encrypted in the OS keychain by main; never read back here)
+  box.appendChild(sep());
+  box.appendChild(sechead('Remote engine keys' + (eng.keys?.keychain ? ' — stored in the OS keychain' : ' — no keychain available')));
+  ['openai', 'elevenlabs'].forEach((provider) => {
+    const f = field(`${provider} key ${eng.keys?.[provider] ? '(saved)' : ''}`, '', () => {}, 'password');
+    const input = f.querySelector('input');
+    const row = document.createElement('div'); row.className = 'btnrow';
+    row.append(btn('Save key', async () => {
+      const r = await E.transcribe.setKey(provider, input.value);
+      input.value = '';
+      setStatus(r.ok ? `${provider} key saved` : 'Could not save key', r.ok ? 'ok' : 'error');
+      stt.engines = await E.transcribe.engines(); renderTranscribePanel();
+    }), btn('Clear', async () => {
+      await E.transcribe.setKey(provider, '');
+      stt.engines = await E.transcribe.engines(); renderTranscribePanel();
+    }));
+    box.appendChild(f); box.appendChild(row);
+  });
+
+  box.appendChild(sep());
+  const go = btn(stt.busy ? 'Transcribing…' : 'Transcribe', runTranscribe, 'primary');
+  go.disabled = stt.busy;
+  box.appendChild(btnRow(go));
+  if (stt.log.length) {
+    const logBox = document.createElement('div'); logBox.className = 'ac-summary';
+    logBox.textContent = stt.log.slice(-6).join('\n');
+    box.appendChild(logBox);
+  }
+}
+
+async function runTranscribe() {
+  if (stt.busy) return;
+  stt.busy = true; stt.log = []; renderTranscribePanel();
+  setStatus('Transcribing…', 'working');
+  const off = E.transcribe.onEvent(async (m) => {
+    if (m.type === 'progress') {
+      stt.log.push(`${m.stage}: ${m.detail || ''}`.trim());
+      setStatus(`Transcribing — ${m.stage}`, 'working');
+      renderTranscribePanel();
+    }
+    if (m.type === 'error') {
+      stt.busy = false; off();
+      setStatus('Transcribe failed: ' + String(m.error).slice(0, 140), 'error');
+      stt.log.push('error: ' + m.error); renderTranscribePanel();
+    }
+    if (m.type === 'done') {
+      stt.busy = false; off();
+      setStatus(`Transcribed ${m.words} words${m.cues ? `, ${m.cues} captions` : ''}`, 'ok');
+      stt.log.push(`done: ${m.words} words, ${m.cues || 0} cues (${m.engine})`);
+      await loadProject();
+      renderTranscribePanel();
+    }
+  });
+  const r = await E.transcribe.start(stt.opts);
+  if (r?.error) { stt.busy = false; off(); setStatus('Transcribe failed: ' + r.error, 'error'); renderTranscribePanel(); }
 }
 
 // ---------------------------------------------------------------- auto-cut

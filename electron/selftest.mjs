@@ -265,6 +265,70 @@ export async function runEditTests({ win, settings }) {
     return r;
   });
 
+  // ---------------------------------------------------------------- transcription
+  await test('transcribe: engines are detected and the panel opens', async () => {
+    const r = await js(`(async () => {
+      document.querySelector('#btnTranscribe').click();
+      for (let i = 0; i < 20 && !document.querySelector('#inspector .kind'); i++) await new Promise(r => setTimeout(r, 200));
+      const engines = await window.editor.transcribe.engines();
+      return { kind: document.querySelector('#inspector .kind')?.textContent,
+               buttons: [...document.querySelectorAll('#inspector button')].map(b => b.textContent).slice(0, 6),
+               engines };
+    })()`, true);
+    expect(r.kind === 'transcribe', 'the transcribe panel did not open: ' + r.kind);
+    expect(r.engines.hyperframes === true, 'no local transcription engine detected');
+    return r;
+  });
+
+  await test('transcribe: API keys round-trip through the OS keychain, never back to the page', async () => {
+    const r = await js(`(async () => {
+      const set = await window.editor.transcribe.setKey('openai', 'sk-test-selftest-123');
+      const after = await window.editor.transcribe.engines();
+      const cleared = await window.editor.transcribe.setKey('openai', '');
+      const final = await window.editor.transcribe.engines();
+      // the bridge must expose no way to read a key back
+      const readable = Object.keys(window.editor.transcribe).filter(k => /get|read|key/i.test(k) && k !== 'setKey');
+      return { set, sawKey: after.openai, cleared, stillThere: final.openai, readable, keychain: after.keys?.keychain };
+    })()`, true);
+    expect(r.set?.ok === true, 'could not store a key');
+    expect(r.sawKey === true, 'stored key was not detected');
+    expect(r.stillThere === false, 'clearing the key did not work');
+    expect(r.readable.length === 0, 'the bridge exposes a key getter: ' + r.readable.join(','));
+    return r;
+  });
+
+  await test('transcribe: rebuilds transcript.json + captions from the real audio', async () => {
+    const projBefore = disk();
+    const r = await js(`(async () => {
+      const events = []; const off = window.editor.transcribe.onEvent(e => events.push(e));
+      const t0 = Date.now();
+      await window.editor.transcribe.start({ engine: 'hyperframes', model: 'tiny.en', rebuildCaptions: true, wordsPerCue: 3 });
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+          if (Date.now() - t0 > 900000) { clearInterval(iv); res({ type: 'timeout' }); }
+        }, 500);
+      });
+      off();
+      return { done, stages: [...new Set(events.filter(e => e.type === 'progress').map(e => e.stage))],
+               seconds: Math.round((Date.now() - t0) / 1000) };
+    })()`, true);
+    expect(r.done?.type === 'done', 'transcription did not finish: ' + JSON.stringify(r.done).slice(0, 200));
+    expect(r.done.words > 50, `too few words: ${r.done.words}`);
+
+    const words = JSON.parse(readFileSync(settings.work + '/transcript.json', 'utf8'));
+    expect(Array.isArray(words) && words.every((w) => w.text && w.end >= w.start), 'transcript.json is malformed');
+    const projAfter = disk();
+    expect(projAfter.captions.cues.length > 10, 'captions were not rebuilt');
+    expect(projAfter.captions.defaults.font === projBefore.captions.defaults.font, 'caption defaults were clobbered');
+    expect(projAfter.scenes.length === projBefore.scenes.length, 'scenes were lost by the rebuild');
+    // a caption must carry an emphasis word, like the Python builder produced
+    expect(projAfter.captions.cues.some((c) => c.tokens.some((t) => t.e)), 'no emphasis words were chosen');
+    return { words: r.done.words, cues: r.done.cues, seconds: r.seconds, stages: r.stages,
+             sample: words.slice(0, 6).map((w) => w.text).join(' ') };
+  });
+
   // ---------------------------------------------------------------- auto-cut
   await test('auto-cut: every proposed silence is genuinely silent in the audio', async () => {
     const r = await js(`(async () => {
