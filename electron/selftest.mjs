@@ -33,11 +33,22 @@ export async function runEditTests({ win, settings }) {
   // `core` and runs anywhere ffmpeg exists. CI runs core; a full local run does the lot.
   const HEAVY = [/^transcribe:/, /^templates: rendering/, /^templates: a user-installed/,
                  /^onboarding: a raw video/];
+  // The synthetic project's audio is a tone: anything that needs real speech must sit out.
+  const NEEDS_SPEECH = [/^transcribe: rebuilds/];
+  const synthetic = (() => {
+    try { return JSON.parse(readFileSync(projectFile, 'utf8')).meta?.source === 'synthetic'; }
+    catch { return false; }
+  })();
   const wanted = (process.env.CVE_TEST_TAGS || '').split(',').map((t) => t.trim()).filter(Boolean);
   const tagsFor = (name) => (HEAVY.some((re) => re.test(name)) ? ['heavy', 'network'] : ['core']);
 
   const test = async (name, fn) => {
     const tags = tagsFor(name);
+    if (synthetic && NEEDS_SPEECH.some((re) => re.test(name))) {
+      results.push({ name, pass: true, skipped: true, tags, reason: 'needs real speech' });
+      console.log('[selftest] SKIP', name, '(needs real speech)');
+      return;
+    }
     if (wanted.length && !tags.some((t) => wanted.includes(t))) {
       results.push({ name, pass: true, skipped: true, tags });
       console.log('[selftest] SKIP', name, `(${tags.join(',')})`);
@@ -456,8 +467,9 @@ export async function runEditTests({ win, settings }) {
     const { tmpdir } = await import('node:os');
     const src = join(tmpdir(), 'cve_newproj_src.mov');
     const dest = join(mkdtempSync(join(tmpdir(), 'cve-np-')), 'clip_edit');
-    // a real 18s recording to feed the pipeline (trimmed from the workspace master)
-    execFileSync('ffmpeg', ['-hide_banner', '-y', '-ss', '0', '-t', '18', '-i',
+    // a real recording to feed the pipeline, trimmed from whatever master this project has
+    const sourceDur = Math.min(18, Math.max(4, Math.floor(disk().meta.duration - 0.5)));
+    execFileSync('ffmpeg', ['-hide_banner', '-y', '-ss', '0', '-t', String(sourceDur), '-i',
       join(settings.work, 'graded_master.mp4'), '-c:v', 'h264_videotoolbox', '-b:v', '6M',
       '-c:a', 'aac', src], { stdio: 'ignore' });
 
@@ -466,7 +478,7 @@ export async function runEditTests({ win, settings }) {
       const t0 = Date.now();
       const started = await window.editor.newProject.create({
         source: ${JSON.stringify(src)}, dest: ${JSON.stringify(dest)},
-        transcribe: true, model: 'tiny.en',
+        transcribe: ${JSON.stringify(!synthetic)}, model: 'tiny.en',
       });
       const done = await new Promise(res => {
         const iv = setInterval(() => {
@@ -482,20 +494,26 @@ export async function runEditTests({ win, settings }) {
     })()`, true);
 
     expect(r.done?.type === 'done', 'project creation failed: ' + JSON.stringify(r.done).slice(0, 250));
-    for (const f of ['project.json', 'graded_master.mp4', 'transcript.json']) {
+    // transcript.json only exists when transcription ran (it is skipped for tone-only audio)
+    const required = ['project.json', 'graded_master.mp4', ...(synthetic ? [] : ['transcript.json'])];
+    for (const f of required) {
       expect(existsSync(join(dest, f)), `the new project is missing ${f}`);
     }
     const p = JSON.parse(readFileSync(join(dest, 'project.json'), 'utf8'));
     expect(p.meta?.width === 1920 && p.meta?.height === 1080, 'the master was not normalised to 1080p: ' + JSON.stringify(p.meta));
     expect(p.meta?.fps === 30, 'the master is not 30fps: ' + p.meta?.fps);
-    expect(p.captions?.cues?.length > 5, 'no captions were built: ' + p.captions?.cues?.length);
-    expect(p.captions.cues.every((c) => c.tokens?.length && c.end >= c.start), 'malformed cues');
-    expect(Math.abs(p.meta.duration - 18) < 1.5, 'duration is wrong: ' + p.meta.duration);
-    expect(r.stages.includes('probe') && r.stages.includes('grade') && r.stages.includes('transcribe')
-      && r.stages.includes('build'), 'stages missing: ' + r.stages.join(','));
+    if (!synthetic) {
+      expect(p.captions?.cues?.length > 5, 'no captions were built: ' + p.captions?.cues?.length);
+    }
+    expect((p.captions?.cues || []).every((c) => c.tokens?.length && c.end >= c.start), 'malformed cues');
+    expect(Math.abs(p.meta.duration - sourceDur) < 1.5,
+      `duration is wrong: ${p.meta.duration} (source was ${sourceDur}s)`);
+    const needStages = ['probe', 'grade', 'build', ...(synthetic ? [] : ['transcribe'])];
+    expect(needStages.every((st) => r.stages.includes(st)), 'stages missing: ' + r.stages.join(','));
 
-    const out = { seconds: r.seconds, cues: p.captions.cues.length, duration: p.meta.duration,
-                  stages: r.stages, sample: p.captions.cues[0].tokens.map((t) => t.t).join(' ') };
+    const out = { seconds: r.seconds, cues: p.captions?.cues?.length || 0, duration: p.meta.duration,
+                  stages: r.stages,
+                  sample: p.captions?.cues?.[0]?.tokens?.map((t) => t.t).join(' ') || '(no transcript)' };
     // the app adopted the new folder — put the test workspace back before anything else runs
     await js(`window.editor.newProject.adopt(${JSON.stringify(settings.work)})`);
     await wait(600);

@@ -125,7 +125,10 @@ function normalise(raw) {
     start: Number(w.start ?? w.from ?? w.offsets?.from / 1000),
     end: Number(w.end ?? w.to ?? w.offsets?.to / 1000),
   })).filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start);
-  if (!words.length) throw new Error('the engine returned no word timings');
+  if (!words.length) {
+    throw new Error('no speech was detected in this audio — check the recording has a voice track, '
+      + 'or pick a different engine/model');
+  }
   return words.sort((a, b) => a.start - b.start);
 }
 
