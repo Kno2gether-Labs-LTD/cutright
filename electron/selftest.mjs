@@ -282,7 +282,7 @@ export async function runEditTests({ win, settings }) {
   // ---------------------------------------------------------------- onboarding
   await test('onboarding: the guided tour spotlights real elements', async () => {
     const r = await js(`(async () => {
-      localStorage.removeItem('cutwright.tourSeen');
+      localStorage.removeItem('cutright.tourSeen');
       startTour(true);
       await new Promise(r => setTimeout(r, 400));
       const seen = [];
@@ -298,7 +298,7 @@ export async function runEditTests({ win, settings }) {
         await new Promise(r => setTimeout(r, 250));
       }
       const finished = document.querySelector('#tour').hidden;
-      const remembered = localStorage.getItem('cutwright.tourSeen');
+      const remembered = localStorage.getItem('cutright.tourSeen');
       return { seen, finished, remembered };
     })()`, true);
     expect(r.seen.length >= 6, 'the tour showed too few steps: ' + r.seen.length);

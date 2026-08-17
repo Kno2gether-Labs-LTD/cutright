@@ -3,7 +3,7 @@
 **Status:** Accepted (2026-08-17, after owner feedback: "the app interface is not much intuitive")
 
 ## Context
-Cutwright could only *open* a project folder that already contained `project.json` and
+Cutright could only *open* a project folder that already contained `project.json` and
 `graded_master.mp4`. Those were produced outside the app — by running `claude` with the
 `video-edit` skill. So the first thing a new user had to do was something the app never
 mentioned and could not do. The welcome screen described a "workspace" in terms of files

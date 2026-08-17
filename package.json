@@ -1,11 +1,14 @@
 {
-  "name": "cutwright",
-  "productName": "Cutwright",
+  "name": "cutright",
+  "productName": "Cutright",
   "version": "0.1.0",
-  "description": "Cutwright — an agent-driven desktop video editor. The edit is data (project.json); works with Claude Code in a side terminal.",
+  "description": "Cutright — an agent-driven desktop video editor by Viddescriptor. The edit is data (project.json); works with Claude Code in a side terminal.",
   "type": "module",
   "main": "electron/main.js",
-  "author": "Avijit Sarkar",
+  "author": {
+    "name": "Avijit Sarkar",
+    "email": "avijeett007@gmail.com"
+  },
   "license": "Apache-2.0",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
@@ -15,7 +18,9 @@
     "pack": "npm run vendor && electron-builder --dir",
     "dist": "npm run vendor && electron-builder --mac dmg --arm64",
     "dist:win": "npm run vendor && electron-builder --win nsis --x64",
-    "sync-engine": "node scripts/sync-engine.mjs"
+    "sync-engine": "node scripts/sync-engine.mjs",
+    "dist:signed": "npm run vendor && bash scripts/dist-signed.sh",
+    "signing": "bash scripts/setup-signing.sh"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -30,8 +35,8 @@
     "electron-builder": "26.15.3"
   },
   "build": {
-    "appId": "com.avijitsarkar.cutwright",
-    "productName": "Cutwright",
+    "appId": "com.viddescriptor.cutright",
+    "productName": "Cutright",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -43,7 +48,6 @@
       "templates/**/*",
       "schema/**/*",
       "docs/GETTING_STARTED.md",
-      "docs/ACTION_ITEMS.md",
       "package.json",
       "!**/*.map"
     ],
@@ -72,7 +76,7 @@
       "icon": "build/icon.icns"
     },
     "dmg": {
-      "title": "Cutwright ${version}"
+      "title": "Cutright ${version}"
     },
     "win": {
       "target": [
@@ -89,6 +93,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
-    "afterSign": "build/notarize.cjs"
-  }
+    "afterSign": "build/notarize.cjs",
+    "copyright": "Copyright © 2026 Avijit Sarkar (Viddescriptor)"
+  },
+  "homepage": "https://viddescriptor.com"
 }

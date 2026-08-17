@@ -3,7 +3,7 @@
 **Status:** Accepted (2026-08-17) · Follows from [0002](0002-licence-apache-2.md)
 
 ## Context
-Cutwright shells out to `ffmpeg`/`ffprobe` for every grade, overlay, splice and encode. Bundling the
+Cutright shells out to `ffmpeg`/`ffprobe` for every grade, overlay, splice and encode. Bundling the
 binary would make installation one click, but the standard prebuilds (`ffmpeg-static`, gyan.dev,
 evermeet, most Homebrew bottles) are `--enable-gpl` builds containing x264/x265. Distributing one
 inside an Apache-2.0 app would force the whole distribution to GPL.

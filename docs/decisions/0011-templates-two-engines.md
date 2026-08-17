@@ -22,7 +22,7 @@ Both produce an alpha clip which is added to `overlays[]` and composited by the 
 on the test preset); **WebM/VP9 alpha was tested and rejected** — this ffmpeg build decodes
 it as opaque yuv420p, so the alpha silently disappears.
 
-Templates are found in the app bundle **and** in `~/Library/Application Support/Cutwright/
+Templates are found in the app bundle **and** in `~/Library/Application Support/Cutright/
 templates`, user first. That is the whole install mechanism for a downloaded pack.
 
 ## Consequences

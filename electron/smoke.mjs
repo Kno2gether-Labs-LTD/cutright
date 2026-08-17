@@ -197,7 +197,7 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
     // CVE_SMOKE_PANEL=transcript|templates|autocut|look opens a panel before the screenshot
     // (used for documentation shots and for eyeballing a panel after a change)
     if (process.env.CVE_SMOKE_TOUR) {
-      await win.webContents.executeJavaScript(`(() => { try { localStorage.removeItem('cutwright.tourSeen'); } catch {} startTour(true);
+      await win.webContents.executeJavaScript(`(() => { try { localStorage.removeItem('cutright.tourSeen'); } catch {} startTour(true);
         for (let i = 1; i < ${Number(process.env.CVE_SMOKE_TOUR) || 1}; i++) document.querySelector('#tourNext').click(); })()`);
       await wait(1200);
     }

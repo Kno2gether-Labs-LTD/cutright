@@ -8,7 +8,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, watch, statSync, createReadStream } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -70,7 +70,24 @@ const DEFAULTS = {
 };
 let settingsPath = null, settings = { ...DEFAULTS };
 
+// The rename moved userData (Cutwright → Cutright). Carry the old settings, recents and
+// installed templates across once, so an existing install does not look factory-fresh.
+function migrateOldUserData() {
+  try {
+    const now = app.getPath('userData');
+    const old = join(dirname(now), 'Cutwright');
+    if (!existsSync(old) || existsSync(join(now, 'settings.json'))) return;
+    mkdirSync(now, { recursive: true });
+    for (const name of ['settings.json', 'templates']) {
+      const from = join(old, name), to = join(now, name);
+      if (existsSync(from) && !existsSync(to)) cpSync(from, to, { recursive: true });
+    }
+    log('migrated user data from', old);
+  } catch (e) { log('user-data migration skipped:', e.message); }
+}
+
 function loadSettings() {
+  migrateOldUserData();
   settingsPath = join(app.getPath('userData'), 'settings.json');
   try { settings = { ...DEFAULTS, ...JSON.parse(readFileSync(settingsPath, 'utf8')) }; } catch { /* first run */ }
   const argWork = process.argv.find((a) => a.startsWith('--cve-work='));
@@ -765,7 +782,7 @@ app.whenReady().then(async () => {
   createWindow();
   watchProject();
   // The self-test can also be driven from a packaged app:
-  //   open -a Cutwright.app --args --cve-smoke=ui,term --cve-out=/tmp/x
+  //   open -a Cutright.app --args --cve-smoke=ui,term --cve-out=/tmp/x
   const argSmoke = process.argv.find((a) => a.startsWith('--cve-smoke='));
   if (argSmoke) {
     process.env.CVE_SMOKE = argSmoke.split('=')[1];

@@ -1,8 +1,8 @@
-# Getting started with Cutwright
+# Getting started with Cutright
 
 ## The one thing to understand
 
-Cutwright edits a **project folder**. A project folder holds three things:
+Cutright edits a **project folder**. A project folder holds three things:
 
 | file | what it is |
 |---|---|
@@ -24,7 +24,7 @@ in the top-left → **“Start from a video…”**.
 2. **Project folder** — filled in for you as `<video name>_edit` next to the recording. Change
    it if you'd rather keep projects somewhere else. It is created for you.
 3. **Match the colour of another video** *(optional)* — point this at a finished video you like
-   and Cutwright matches its grade. Leave it empty to keep your original look.
+   and Cutright matches its grade. Leave it empty to keep your original look.
 4. **Transcribe** — leave on. It runs **on your machine** (nothing is uploaded) and unlocks
    captions, auto-cut and transcript editing. `small.en` is accurate; `tiny.en` is ~3× faster.
 5. **Create project.**
@@ -120,7 +120,7 @@ Both write into the project folder (`preview.mp4`, `FINAL.mp4`).
 - **A render seems stuck** — the status bar says so after 90 seconds of silence, and the job is
   killed automatically after 20 minutes of nothing. **Cancel** always works.
 
-## What Cutwright can't do yet
+## What Cutright can't do yet
 
 - Only **one video source** per project — you can't yet drop a screen recording or B-roll onto a
   second track (it's the top of the roadmap).

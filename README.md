@@ -1,4 +1,4 @@
-# Cutwright
+# Cutright
 
 An **agent-driven desktop video editor**. The edit is data — one `project.json` that both you
 and an AI agent read and write — and the render is a deterministic function of it. Run
@@ -6,7 +6,7 @@ and an AI agent read and write — and the render is a deterministic function of
 
 Apache-2.0. macOS today, Windows code paths present but untested.
 
-![Cutwright](build/icon.png)
+![Cutright](build/icon.png)
 
 ## What it does
 
@@ -36,7 +36,7 @@ remotely with a key stored in the OS keychain. Rebuilds the captions from the ne
 **The agent.** `claude` runs in the terminal with the project as its working directory. When it
 edits `project.json`, the UI reloads — without clobbering an edit you're in the middle of.
 
-**Start from a recording.** Pick a raw video and Cutwright builds the 1080p master, transcribes it
+**Start from a recording.** Pick a raw video and Cutright builds the 1080p master, transcribes it
 locally and opens the timeline — no prep, no other tool.
 
 **New here?** Read [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — it explains the one
@@ -47,13 +47,13 @@ four things worth trying first. The app shows a guided tour on first launch
 ## Run it
 
 ```bash
-git clone <repo> && cd cutwright
+git clone <repo> && cd cutright
 npm install
 npm run rebuild                  # node-pty against Electron's ABI (once per Electron upgrade)
 npm run dev                      # or: WORK=/path/to/workspace npm run dev
 ```
 
-First launch offers two ways in: **Start from a video…** (pick a recording — Cutwright builds the
+First launch offers two ways in: **Start from a video…** (pick a recording — Cutright builds the
 1080p master, transcribes it locally and opens the timeline) or **Open an existing project…**.
 The folder chip in the top-left is the project switcher afterwards.
 
@@ -67,7 +67,7 @@ The app checks all of these on launch and tells you exactly what's missing
 
 ### Build an installer
 ```bash
-npm run dist                     # → dist/Cutwright-0.1.0-arm64.dmg
+npm run dist                     # → dist/Cutright-0.1.0-arm64.dmg
 npm run smoke                    # the full self-test: 40 assertions, screenshots, exits 0/1
 ```
 
@@ -107,7 +107,7 @@ window, and can be cancelled — a hung render can never take the app down.
 
 ## ⚠️ ffmpeg licensing
 
-Cutwright ships **no** ffmpeg binary. Prebuilt distributions (ffmpeg-static, gyan, evermeet,
+Cutright ships **no** ffmpeg binary. Prebuilt distributions (ffmpeg-static, gyan, evermeet,
 most Homebrew bottles) are `--enable-gpl` builds containing x264/x265; redistributing one inside
 this Apache-2.0 app would put the whole distribution under the GPL. We invoke whatever ffmpeg the
 user installed, as a separate process. If a future release wants one-click install, it needs a
@@ -133,5 +133,5 @@ page. `node-pty` runs your real shell — treat the app as the local dev tool it
 ## Licence
 
 Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
-"Claude" and "Claude Code" are trademarks of Anthropic; Cutwright is an independent project that
+"Claude" and "Claude Code" are trademarks of Anthropic; Cutright is an independent project that
 integrates with the Claude Code CLI.

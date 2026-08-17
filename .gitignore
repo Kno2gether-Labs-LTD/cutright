@@ -5,3 +5,5 @@ dist/
 out/
 out/
 renderer/vendor/
+private/
+.cutright-signing/

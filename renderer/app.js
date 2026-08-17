@@ -1,4 +1,4 @@
-// Cutwright — renderer.
+// Cutright — renderer.
 // Runs sandboxed (no Node, no network). Everything that touches disk, ffmpeg or a shell
 // goes through `window.editor`, the narrow contextBridge API in electron/preload.cjs.
 const $ = (s) => document.querySelector(s);
@@ -643,7 +643,7 @@ function startTour(fromStart = true) {
 function endTour() {
   tour.active = false;
   $('#tour').hidden = true;
-  try { localStorage.setItem('cutwright.tourSeen', '1'); } catch {}
+  try { localStorage.setItem('cutright.tourSeen', '1'); } catch {}
 }
 function stepTour(d) {
   const next = tour.i + d;
@@ -692,7 +692,7 @@ function initTour() {
   }, true);
   E.onShowTour?.(() => startTour(true));
   let seen = false;
-  try { seen = localStorage.getItem('cutwright.tourSeen') === '1'; } catch {}
+  try { seen = localStorage.getItem('cutright.tourSeen') === '1'; } catch {}
   if (!seen) setTimeout(() => startTour(true), 900);
 }
 

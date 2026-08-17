@@ -39,6 +39,6 @@ project's `overlays[]` — from then on it is a normal timeline clip.
 ## Where templates are found
 
 1. bundled with the app (`templates/` in the app resources)
-2. `~/Library/Application Support/Cutwright/templates` (user-installed)
+2. `~/Library/Application Support/Cutright/templates` (user-installed)
 
 Both are scanned at startup; the user directory wins on an id clash.
