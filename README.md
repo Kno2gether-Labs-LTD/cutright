@@ -33,8 +33,11 @@ remotely with a key stored in the OS keychain. Rebuilds the captions from the ne
 
 **Generated audio.** ElevenLabs SFX, voice and music layers, mixed and loudness-normalised.
 
-**The agent.** `claude` runs in the terminal with the workspace as its working directory. When it
+**The agent.** `claude` runs in the terminal with the project as its working directory. When it
 edits `project.json`, the UI reloads — without clobbering an edit you're in the middle of.
+
+**Start from a recording.** Pick a raw video and Cutwright builds the 1080p master, transcribes it
+locally and opens the timeline — no prep, no other tool.
 
 **New here?** Read [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — it explains the one
 concept that matters (a project is a folder), how to start an edit from a raw recording, and the
@@ -65,7 +68,7 @@ The app checks all of these on launch and tells you exactly what's missing
 ### Build an installer
 ```bash
 npm run dist                     # → dist/Cutwright-0.1.0-arm64.dmg
-npm run smoke                    # the full self-test: 35 assertions, screenshots, exits 0/1
+npm run smoke                    # the full self-test: 40 assertions, screenshots, exits 0/1
 ```
 
 ## Keyboard
@@ -113,7 +116,7 @@ custom **LGPL** build (no x264/x265, hardware encoders only) — see
 
 ## Testing
 
-`npm run smoke` launches the real app and drives the real UI: 35 assertions covering every
+`npm run smoke` launches the real app and drives the real UI: 40 assertions covering every
 feature — editing round-trips to disk, auto-cut proposals verified against the actual audio with
 `volumedetect`, a real transcription, both template engines producing alpha, a full export whose
 duration matches the ripple maths exactly, cancel leaving no stray processes, and the security
