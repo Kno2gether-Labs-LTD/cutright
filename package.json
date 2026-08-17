@@ -20,7 +20,8 @@
     "dist:win": "npm run vendor && electron-builder --win nsis --x64",
     "sync-engine": "node scripts/sync-engine.mjs",
     "dist:signed": "npm run vendor && bash scripts/dist-signed.sh",
-    "signing": "bash scripts/setup-signing.sh"
+    "signing": "bash scripts/setup-signing.sh",
+    "art": "node scripts/make-dmg-art.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -76,7 +77,28 @@
       "icon": "build/icon.icns"
     },
     "dmg": {
-      "title": "Cutright ${version}"
+      "title": "Cutright ${version}",
+      "background": "build/background.tiff",
+      "icon": "build/icon.icns",
+      "iconSize": 100,
+      "iconTextSize": 12,
+      "window": {
+        "width": 560,
+        "height": 400
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "win": {
       "target": [
@@ -91,7 +113,15 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cutright"
     },
     "afterSign": "build/notarize.cjs",
     "copyright": "Copyright © 2026 Avijit Sarkar (Viddescriptor)"
