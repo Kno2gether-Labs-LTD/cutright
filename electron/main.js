@@ -94,6 +94,11 @@ function loadSettings() {
   if (argWork) settings.work = argWork.split('=')[1];
   if (process.env.WORK) settings.work = process.env.WORK;   // env always wins (dev/smoke)
   if (!Array.isArray(settings.recent)) settings.recent = [];
+  // whatever we end up opening belongs in Recents, however it was chosen
+  if (settings.work && existsSync(join(settings.work, 'project.json'))) {
+    settings.recent = [settings.work, ...settings.recent.filter((r) => r !== settings.work)]
+      .filter((r) => existsSync(r)).slice(0, 8);
+  }
   // a settings file written by an older build can point the engine somewhere that is gone
   if (!settings.engine || !existsSync(join(settings.engine, 'render_project.py'))) {
     settings.engine = DEFAULTS.engine;
@@ -682,6 +687,12 @@ function registerIpc() {
       })).filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end));
       return { words };
     } catch (e) { return { error: 'unreadable transcript.json: ' + e.message }; }
+  });
+
+  ipcMain.handle('media:exists', (_e, name) => {
+    if (!settings.work) return false;
+    const p = allowedPath(join(settings.work, basename(String(name || ''))));
+    return !!p && existsSync(p);
   });
 
   ipcMain.handle('project:get', () => {

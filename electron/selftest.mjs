@@ -14,13 +14,51 @@ export async function runEditTests({ win, settings }) {
   const backup = readFileSync(projectFile, 'utf8');
   const results = [];
   const disk = () => JSON.parse(readFileSync(projectFile, 'utf8'));
+  const DUR = () => disk().meta?.duration || 10;
+  const at = (fraction) => +(DUR() * fraction).toFixed(2);      // a time inside any project
 
   const js = (code) => wc.executeJavaScript(code, true);
-  // The UI autosaves 400ms after the last edit; give it room, then read the real file.
-  const settle = () => wait(900);
+  // The UI autosaves 400ms after the last edit. Rather than guessing, wait until it says
+  // "Saved" — a fixed sleep is exactly the kind of flake a public CI cannot afford.
+  const settle = async (ms = 4000) => {
+    const started = Date.now();
+    await wait(250);
+    while (Date.now() - started < ms) {
+      const status = await js(`document.querySelector('#status')?.textContent || ''`).catch(() => '');
+      if (!/Unsaved/i.test(status)) { await wait(150); return; }
+      await wait(150);
+    }
+  };
+  // Tests that need the network or a model download are tagged `heavy`; everything else is
+  // `core` and runs anywhere ffmpeg exists. CI runs core; a full local run does the lot.
+  const HEAVY = [/^transcribe:/, /^templates: rendering/, /^templates: a user-installed/,
+                 /^onboarding: a raw video/];
+  const wanted = (process.env.CVE_TEST_TAGS || '').split(',').map((t) => t.trim()).filter(Boolean);
+  const tagsFor = (name) => (HEAVY.some((re) => re.test(name)) ? ['heavy', 'network'] : ['core']);
+
   const test = async (name, fn) => {
-    try { const detail = await fn(); results.push({ name, pass: true, detail }); }
-    catch (e) { results.push({ name, pass: false, error: e?.message || String(e) }); }
+    const tags = tagsFor(name);
+    if (wanted.length && !tags.some((t) => wanted.includes(t))) {
+      results.push({ name, pass: true, skipped: true, tags });
+      console.log('[selftest] SKIP', name, `(${tags.join(',')})`);
+      return;
+    }
+    try { const detail = await fn(); results.push({ name, pass: true, detail, tags }); }
+    catch (e) {
+      // capture what the app looked like at the moment of failure — a bare assertion
+      // message is rarely enough to tell a product bug from a test-order accident
+      let ctx = {};
+      try {
+        ctx = await js(`({ inspector: document.querySelector('#inspector .kind')?.textContent || null,
+          selection: JSON.stringify(window.__cve.sel || null),
+          homeOpen: !document.querySelector('#home')?.hidden,
+          status: document.querySelector('#status')?.textContent,
+          cues: window.__cve.project?.captions?.cues?.length,
+          cuts: JSON.stringify(window.__cve.project?.cuts || []),
+          reloads: window.__cve.reloads || 0 })`);
+      } catch {}
+      results.push({ name, pass: false, error: e?.message || String(e), tags, context: ctx });
+    }
     console.log('[selftest]', results[results.length - 1].pass ? 'PASS' : 'FAIL', name,
       results[results.length - 1].error || '');
   };
@@ -142,7 +180,7 @@ export async function runEditTests({ win, settings }) {
   // ---------------------------------------------------------------- cuts
   await test('cut: "+ cut at playhead" adds a cut → saved', async () => {
     const before = (disk().cuts || []).length;
-    await js(`(() => { document.querySelector('#video').currentTime = 12;
+    await js(`(() => { document.querySelector('#video').currentTime = ${at(0.3)};
       document.querySelector('[data-add="cut"]').click(); })()`);
     await settle();
     const after = disk().cuts.length;
@@ -155,13 +193,14 @@ export async function runEditTests({ win, settings }) {
       const set = (label, val) => { const f = [...document.querySelectorAll('#inspector .field')]
         .find(f => f.querySelector('label')?.textContent === label); const i = f.querySelector('input');
         i.value = val; i.dispatchEvent(new Event('input')); };
-      set('Cut start', '11'); set('Cut end', '13');
-      document.querySelector('#video').currentTime = 15.25;
+      set('Cut start', '${at(0.25)}'); set('Cut end', '${at(0.35)}');
+      document.querySelector('#video').currentTime = ${at(0.45)};
       [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Set end = playhead').click();
     })()`);
     await settle();
     const c = disk().cuts[disk().cuts.length - 1];
-    expect(c.start === 11 && Math.abs(c.end - 15.25) < 0.2, 'cut edit not persisted: ' + JSON.stringify(c));
+    expect(Math.abs(c.start - at(0.25)) < 0.05 && Math.abs(c.end - at(0.45)) < 0.2,
+      'cut edit not persisted: ' + JSON.stringify(c));
     return c;
   });
 
@@ -250,7 +289,7 @@ export async function runEditTests({ win, settings }) {
       await new Promise(r => setTimeout(r, 200));
       const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
       const v = document.querySelector('#video');
-      v.currentTime = 30; key(' '); await new Promise(r => setTimeout(r, 400));
+      v.currentTime = ${at(0.5)}; key(' '); await new Promise(r => setTimeout(r, 400));
       const playing = !v.paused; key(' '); await new Promise(r => setTimeout(r, 200));
       key('s'); await new Promise(r => setTimeout(r, 100));
       const selectedAfterS = !!document.querySelector('#inspector h3');
@@ -296,7 +335,7 @@ export async function runEditTests({ win, settings }) {
       return { visible, recents, hero, feats, promo, brandFont, accent };
     })()`, true);
     expect(r.visible, 'home did not open');
-    expect(r.recents >= 1, 'the recent project was not listed');
+    expect(r.recents >= 1, 'the current project was not listed in Recents');
     expect(r.feats === 6, 'expected six feature cards, saw ' + r.feats);
     expect(r.promo, 'the Viddescriptor promo section is missing');
     expect(/Anton/.test(r.brandFont), 'the brand display font did not load: ' + r.brandFont);
@@ -467,17 +506,22 @@ export async function runEditTests({ win, settings }) {
   // ---------------------------------------------------------------- transcript editing
   await test('transcript editor: words render, selection cuts, restore brings it back', async () => {
     const before = (disk().cuts || []).length;
+    // a five-word window that exists in any transcript, away from both ends
+    const allWords = JSON.parse(readFileSync(settings.work + '/transcript.json', 'utf8'));
+    const pickA = Math.max(1, Math.floor(allWords.length * 0.35));
+    const pickB = Math.min(allWords.length - 2, pickA + 4);
+    await js(`(() => { window.__cve.txPickA = ${pickA}; window.__cve.txPickB = ${pickB}; })()`);
     const r = await js(`(async () => {
       document.querySelector('#btnTranscriptEdit').click();
       for (let i = 0; i < 40 && !document.querySelector('.tx-doc'); i++) await new Promise(r => setTimeout(r, 200));
       const words = document.querySelectorAll('.tx-w').length;
       const pick = (i) => document.querySelector('.tx-w[data-i="' + i + '"]');
-      // select words 40..44 by pointer, exactly as a user would
-      pick(40).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-      pick(44).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+      const A = window.__cve.txPickA, B = window.__cve.txPickB;   // computed for this project
+      // select a five-word phrase by pointer, exactly as a user would
+      pick(A).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      pick(B).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
       const selected = document.querySelectorAll('.tx-w.sel').length;
-      const w40 = window.__cve.project ? null : null;
       [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Cut selection').click();
       await new Promise(r => setTimeout(r, 900));
       const struck = document.querySelectorAll('.tx-w.cut').length;
@@ -486,8 +530,8 @@ export async function runEditTests({ win, settings }) {
     })()`, true);
     await settle();
     const after = disk().cuts || [];
-    expect(r.words > 100, 'the transcript did not render: ' + r.words);
-    expect(r.selected === 5, 'drag selection did not select 5 words: ' + r.selected);
+    expect(r.words >= 8, 'the transcript did not render: ' + r.words);
+    expect(r.selected === pickB - pickA + 1, `drag selection took ${r.selected} words, expected ${pickB - pickA + 1}`);
     expect(after.length > before, 'cutting the selection did not add a cut');
     expect(after.some((c) => c.source === 'transcript'), 'the cut is not tagged as coming from the transcript');
     expect(r.struck > 0, 'cut words are not struck through');
@@ -497,15 +541,15 @@ export async function runEditTests({ win, settings }) {
     const words = JSON.parse(readFileSync(settings.work + '/transcript.json', 'utf8'));
     const made = after.find((c) => c.source === 'transcript');
     const clipped = words.filter((w) => w.start < made.end - 0.02 && w.end > made.start + 0.02);
-    const expected = words.slice(40, 45).map((w) => w.text).join(' ');
+    const expected = words.slice(pickA, pickB + 1).map((w) => w.text).join(' ');
     expect(clipped.map((w) => w.text).join(' ') === expected,
       `the cut spans the wrong words: "${clipped.map((w) => w.text).join(' ')}" vs "${expected}"`);
 
     // restore
     const dbg = await js(`(async () => {
       const pick = (i) => document.querySelector('.tx-w[data-i="' + i + '"]');
-      pick(40).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-      pick(44).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+      pick(window.__cve.txPickA).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      pick(window.__cve.txPickB).dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
       const selBefore = window.__cve.tx.sel;
       const cutsBefore = JSON.parse(JSON.stringify(window.__cve.project.cuts || []));
@@ -569,7 +613,7 @@ export async function runEditTests({ win, settings }) {
 
   await test('transitions: a cut can carry one and it survives to disk', async () => {
     const r = await js(`(async () => {
-      document.querySelector('#video').currentTime = 20;
+      document.querySelector('#video').currentTime = ${at(0.6)};
       document.querySelector('[data-add="cut"]').click();
       await new Promise(r => setTimeout(r, 300));
       const sel = [...document.querySelectorAll('#inspector .field')]
@@ -783,7 +827,18 @@ export async function runEditTests({ win, settings }) {
   });
 
   await test('auto-cut: the panel applies selected cuts and merges overlaps', async () => {
-    const cutSeconds = (p) => (p.cuts || []).reduce((a, c) => a + (c.end - c.start), 0);
+    // union length, not naive sum — merging two overlapping cuts reduces the sum while
+    // removing strictly more of the timeline
+    const cutSeconds = (p) => {
+      const rs = [...(p.cuts || [])].sort((a, b) => a.start - b.start);
+      let total = 0, cur = null;
+      for (const r of rs) {
+        if (!cur || r.start > cur.end) { if (cur) total += cur.end - cur.start; cur = { ...r }; }
+        else cur.end = Math.max(cur.end, r.end);
+      }
+      if (cur) total += cur.end - cur.start;
+      return total;
+    };
     const before = (disk().cuts || []).length;
     const beforeSeconds = cutSeconds(disk());
     const r = await js(`(async () => {
@@ -873,5 +928,10 @@ export async function runEditTests({ win, settings }) {
   await wait(500);
   await js(`window.editor.getProject().then(p => { window.__cve.restored = true; })`).catch(() => {});
 
-  return { total: results.length, passed: results.filter((r) => r.pass).length, results };
+  return {
+    total: results.length,
+    passed: results.filter((r) => r.pass && !r.skipped).length,
+    skipped: results.filter((r) => r.skipped).length,
+    results,
+  };
 }

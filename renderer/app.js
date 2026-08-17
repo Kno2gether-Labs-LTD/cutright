@@ -14,6 +14,7 @@ const video = $('#video');
 window.__cve = {
   get project() { return project; }, get status() { return $('#status').textContent; },
   get zoom() { return zoom; }, get tx() { return { sel: tx.sel, open: tx.open, words: tx.words.length }; },
+  get sel() { return sel; }, reloads: 0,
   loadVideo: (n, s) => loadVideo(n, s), termLog: '',
 };
 
@@ -31,7 +32,7 @@ async function boot() {
   if (!cfg.skipHome) await showHome();
 
   await loadProject();
-  loadVideo('FINAL.mp4');
+  loadPreferredVideo();
   initTerminal();
   initSplitters();
   initKeys();
@@ -43,7 +44,7 @@ async function boot() {
   E.onProjectChanged(reloadIfChanged);
   E.onWorkspaceChanged(async (w) => {
     WORK = w; $('#work').textContent = w.replace(/^.*\//, ''); sel = null;
-    await loadProject(); loadVideo('FINAL.mp4');
+    await loadProject(); loadPreferredVideo();
   });
   initTour();
   $('#btnHome').onclick = () => showHome();
@@ -118,9 +119,21 @@ async function reloadIfChanged() {
   const p = await E.getProject();
   if (p.error || JSON.stringify(p) === JSON.stringify(project)) return;
   project = p; dur = p.meta.duration || 1; fps = p.meta.fps || 30;
+  window.__cve.reloads++;
   $('#tcDur').textContent = fmt(dur);
   renderTimeline(); renderInspector();
   setStatus('Project reloaded — edited on disk', 'ok');
+}
+
+// A project only has FINAL.mp4 after its first export; before that the graded master is
+// the thing to show. Falling back keeps a brand-new project from opening on a dead player.
+async function loadPreferredVideo() {
+  const master = project?.meta?.graded || 'graded_master.mp4';
+  const candidates = ['FINAL.mp4', master];
+  for (const name of candidates) {
+    if (await E.mediaExists(name)) { loadVideo(name); return; }
+  }
+  loadVideo(master);
 }
 
 function loadVideo(name, seek) {
@@ -1072,7 +1085,11 @@ function openLookPanel() {
 
   const grid = document.createElement('div'); grid.className = 'btnrow';
   LOOK_PRESETS.forEach(([id, name, desc]) => {
-    const b = btn(name, () => { look.preset = id; save(); openLookPanel(); });
+    const b = btn(name, () => {
+      look.preset = id; save();
+      grid.querySelectorAll('button').forEach((x) => x.classList.remove('primary'));
+      b.classList.add('primary');
+    });
     b.title = desc;
     if ((look.preset || 'none') === id) b.classList.add('primary');
     grid.appendChild(b);

@@ -84,10 +84,38 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
       await wait(1500);
     }
 
+    if (want.includes('diag')) {
+      // step-by-step trace of the caption edit path, to see exactly where a write is lost
+      const trace = await win.webContents.executeJavaScript(`(async () => {
+        const out = [];
+        const snap = (label) => out.push({ label,
+          cue0: JSON.stringify(window.__cve.project.captions.cues[0]).slice(0, 120),
+          projectRef: window.__cve.project.__id || 'none' });
+        window.__cve.project.__id = 'A' + Date.now();
+        snap('start');
+        document.querySelectorAll('#laneCaps .cap')[0].click();
+        await new Promise(r => setTimeout(r, 300));
+        snap('after select');
+        const labels = [...document.querySelectorAll('#inspector .field label')].map(l => l.textContent);
+        const set = (label, val) => { const f = [...document.querySelectorAll('#inspector .field')]
+          .find(f => f.querySelector('label')?.textContent === label);
+          if (!f) return 'NO FIELD: ' + label;
+          const i = f.querySelector('input'); i.value = val; i.dispatchEvent(new Event('input')); return 'ok'; };
+        const r1 = set('Y pos', '640');
+        await new Promise(r => setTimeout(r, 1200));
+        snap('after Y pos + save');
+        return { out, labels, r1, status: document.querySelector('#status').textContent,
+                 inspectorKind: document.querySelector('#inspector .kind')?.textContent };
+      })()`, true);
+      const onDisk = JSON.parse(readFileSync(settings.work + '/project.json', 'utf8'));
+      check('diag', { ...trace, diskCue0Overrides: onDisk.captions.cues[0].overrides || null });
+    }
+
     if (want.includes('edit')) {
       const { runEditTests } = await import('./selftest.mjs');
       const r = await runEditTests({ win, settings });
-      check('editSuite', { passed: r.passed, total: r.total,
+      check('editSuite', { passed: r.passed, total: r.total, skipped: r.skipped,
+        tags: process.env.CVE_TEST_TAGS || 'all',
         failures: r.results.filter((x) => !x.pass).map((x) => `${x.name}: ${x.error}`) });
       report.editResults = r.results;
     }

@@ -137,6 +137,7 @@ contextBridge.exposeInMainWorld('editor', {
   }),
 
   // --- media (streamed by the privileged `cve://` scheme, with Range support) ---
+  mediaExists: (name) => ipcRenderer.invoke('media:exists', str(name)),
   mediaUrl: (nameOrPath, bust) =>
     'cve://media/?p=' + encodeURIComponent(str(nameOrPath)) + (bust ? '&v=' + Date.now() : ''),
 
