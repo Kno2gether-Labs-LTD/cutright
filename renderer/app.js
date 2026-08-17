@@ -12,7 +12,8 @@ window.__cve = { get project() { return project; }, get status() { return $('#st
 
 async function boot() {
   const cfg = await E.config();
-  WORK = cfg.work; $('#work').textContent = cfg.work;
+  WORK = cfg.work; $('#work').textContent = cfg.work || 'no workspace';
+  if (!cfg.hasWorkspace) { showWelcome(cfg); initTerminal(); return; }
   await loadProject();
   loadVideo('FINAL.mp4');
   initTerminal();
@@ -20,9 +21,23 @@ async function boot() {
   requestAnimationFrame(tickPlayhead);
   // main watches project.json on disk (fs.watch) — no polling
   E.onProjectChanged(reloadIfChanged);
+  checkEnv();
   E.onWorkspaceChanged(async (w) => { WORK = w; $('#work').textContent = w; sel = null; await loadProject(); loadVideo('FINAL.mp4'); });
   $('#btnWorkspace').onclick = () => E.chooseWorkspace();
 }
+// First run (or a workspace that went away): ask for one instead of showing an empty editor.
+function showWelcome(cfg) {
+  const w = $('#welcome'); w.hidden = false;
+  $('#wOpen').onclick = () => E.chooseWorkspace().then(r => r?.ok && location.reload());
+  const box = $('#wRecent'); box.innerHTML = '';
+  (cfg.recent || []).forEach(dir => {
+    const b = document.createElement('button');
+    b.textContent = dir;
+    b.onclick = () => E.openWorkspace(dir).then(r => r?.ok && location.reload());
+    box.appendChild(b);
+  });
+}
+
 async function loadProject() {
   project = await E.getProject();
   if (project.error) { setStatus(project.error); project = null; return; }
@@ -42,6 +57,17 @@ function loadVideo(name, seek) {
   if (seek != null) video.addEventListener('loadedmetadata', () => { video.currentTime = seek; }, { once: true });
 }
 function setStatus(t) { $('#status').textContent = t || ''; }
+
+// The app does not bundle ffmpeg (Apache-2.0 — see README § licensing), so say so loudly
+// and early if a required tool is missing, rather than dying mid-render.
+async function checkEnv() {
+  const env = await E.checkEnvironment();
+  window.__cve.env = env;
+  const bar = $('#envbar');
+  if (env.ok) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.textContent = 'Missing: ' + env.missing.map(m => `${m.tool} (${m.hint})`).join(' · ');
+}
 
 // ---------- timeline ----------
 function laneW() { return $('#laneScenes').clientWidth; }
@@ -66,6 +92,18 @@ function renderTimeline() {
     b.onclick = () => select('scene', i); if (sel?.kind === 'scene' && sel.index === i) b.classList.add('selected');
     ls.appendChild(b);
   });
+  // overlays (HyperFrames / any RGBA clip composited over the frame)
+  const lo = $('#laneOverlays'); [...lo.querySelectorAll('.overlayclip')].forEach(n => n.remove());
+  (project.overlays || []).forEach((o, i) => {
+    const b = document.createElement('div'); b.className = 'overlayclip';
+    b.style.left = t2x(o.start || 0) + 'px'; b.style.width = Math.max(40, t2x(o.dur || 3)) + 'px';
+    b.textContent = (o.src || '').split('/').pop(); b.title = `${o.src} @ ${fmt(o.start || 0)}`;
+    b.style.opacity = o.enabled === false ? 0.45 : 1;
+    b.onclick = () => select('overlay', i);
+    if (sel?.kind === 'overlay' && sel.index === i) b.classList.add('selected');
+    lo.appendChild(b);
+  });
+
   // captions (ticks)
   const lc = $('#laneCaps'); lc.innerHTML = '';
   (project.captions.cues || []).forEach((c, i) => {
@@ -102,6 +140,7 @@ function elemOf(s) {
   if (s.kind === 'music') return project.audio.music[s.index];
   if (s.kind === 'sfx') return project.audio.sfx[s.index];
   if (s.kind === 'cut') return project.cuts[s.index];
+  if (s.kind === 'overlay') return project.overlays[s.index];
 }
 function field(label, val, on, type = 'text') {
   const f = document.createElement('div'); f.className = 'field';
@@ -163,6 +202,25 @@ function renderInspector() {
     const b1 = document.createElement('button'); b1.textContent = 'Set start = playhead'; b1.onclick = () => { e.start = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); };
     const b2 = document.createElement('button'); b2.textContent = 'Set end = playhead'; b2.onclick = () => { e.end = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); };
     set.append(b1, b2); box.appendChild(set);
+  } else if (sel.kind === 'overlay') {
+    box.appendChild(hint('An overlay is any clip with alpha (HyperFrames “render --format mov”, a PNG sequence, a transparent WebM) composited over the video for its window. Cuts re-time it like everything else.'));
+    box.appendChild(field('Source', e.src, v => { e.src = v; save(); renderTimeline(); }));
+    const pick = document.createElement('div'); pick.className = 'field';
+    const pb = document.createElement('button'); pb.textContent = 'Choose file…';
+    pb.onclick = async () => { const r = await E.pickOverlay(); if (r?.path) { e.src = r.path; save(); renderInspector(); renderTimeline(); } };
+    pick.appendChild(pb); box.appendChild(pick);
+    box.appendChild(rowOf([
+      field('Start', e.start || 0, v => { e.start = +v; save(); renderTimeline(); }, 'number'),
+      field('Dur', e.dur || 4, v => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+    ]));
+    box.appendChild(rowOf([
+      field('X', e.x || 0, v => { e.x = +v; save(); }, 'number'),
+      field('Y', e.y || 0, v => { e.y = +v; save(); }, 'number'),
+    ]));
+    const en = document.createElement('div'); en.className = 'field';
+    const eb = document.createElement('button'); eb.textContent = e.enabled === false ? 'Enable' : 'Disable';
+    eb.onclick = () => { e.enabled = e.enabled === false; save(); renderInspector(); renderTimeline(); };
+    en.appendChild(eb); box.appendChild(en);
   } else { // audio
     box.appendChild(field('Source path', e.src, v => { e.src = v; save(); renderTimeline(); }));
     box.appendChild(rowOf([
@@ -192,6 +250,7 @@ function remove() {
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
+  else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
   else project.audio[sel.kind].splice(sel.index, 1);
   sel = null; save(); renderTimeline(); renderInspector();
 }
@@ -210,6 +269,15 @@ function save() {
 document.addEventListener('click', e => {
   const k = e.target.dataset?.add; if (k) {
     if (!project) return;
+    if (k === 'overlay') {
+      E.pickOverlay().then(r => {
+        if (!r?.path) return;
+        project.overlays = project.overlays || [];
+        project.overlays.push({ id: 'ov' + Date.now(), src: r.path, start: +video.currentTime.toFixed(2), dur: r.duration || 4, x: 0, y: 0 });
+        save(); renderTimeline(); select('overlay', project.overlays.length - 1);
+      });
+      return;
+    }
     if (k === 'cut') { project.cuts = project.cuts || []; const t = +video.currentTime.toFixed(2);
       project.cuts.push({ start: t, end: Math.min(dur, t + 2) }); save(); renderTimeline(); select('cut', project.cuts.length - 1); return; }
     project.audio = project.audio || { music: [], sfx: [] }; project.audio[k] = project.audio[k] || [];

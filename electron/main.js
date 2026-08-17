@@ -8,17 +8,57 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch, statSync, createReadStream } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
 const isDev = !app.isPackaged;
 
+// ---------------------------------------------------------------- logging
+// A packaged app has no terminal, so every launch writes a log we can read after the
+// fact ("I just got a black window"). Kept small and always on.
+let logPath = null;
+function log(...parts) {
+  const line = `[${new Date().toISOString()}] ` + parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ');
+  console.log(line);
+  try {
+    if (!logPath) return;
+    if (existsSync(logPath) && statSync(logPath).size > 1_000_000) writeFileSync(logPath, '');
+    appendFileSync(logPath, line + '\n');
+  } catch {}
+}
+function initLog() {
+  try {
+    const dir = join(app.getPath('userData'), 'logs');
+    mkdirSync(dir, { recursive: true });
+    logPath = join(dir, 'main.log');
+    log('--- launch', app.getVersion(), process.platform, process.arch, 'packaged=' + app.isPackaged, 'electron=' + process.versions.electron);
+  } catch (e) { console.warn('[log] disabled:', e.message); }
+}
+
+// fix-path alone is not enough: launched from Finder/launchd it reproduces the *login*
+// shell PATH, which on this machine (and many others) still lacks Homebrew — so ffmpeg
+// at /opt/homebrew/bin would be invisible and every render would fail. Append the
+// standard package-manager locations that actually exist.
+function ensureToolPaths() {
+  const extra = process.platform === 'win32'
+    ? []
+    : ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/opt/local/bin',
+       join(app.getPath('home'), '.local/bin'), join(app.getPath('home'), 'bin')];
+  const sep2 = process.platform === 'win32' ? ';' : ':';
+  const have = new Set((process.env.PATH || '').split(sep2).filter(Boolean));
+  const add = extra.filter((p) => !have.has(p) && existsSync(p));
+  if (add.length) process.env.PATH = [...have, ...add].join(sep2);
+  return add;
+}
+
 // ---------------------------------------------------------------- settings
 // The "workspace" is the folder holding project.json + graded_master.mp4 + renders.
 const DEFAULTS = {
-  work: process.env.WORK || '/Users/avijit/Pre_final_edit',
+  // No hard-coded workspace: on first run the app asks for one (welcome state).
+  work: process.env.WORK || '',
+  recent: [],
   // The render/audio engine still lives in the `video-edit` skill (Python, Phase 4 ports it to Node).
   engine: process.env.ENGINE || join(app.getPath('home'), '.claude/skills/video-edit/scripts'),
   python: process.env.PYTHON || 'python3',
@@ -28,7 +68,18 @@ let settingsPath = null, settings = { ...DEFAULTS };
 function loadSettings() {
   settingsPath = join(app.getPath('userData'), 'settings.json');
   try { settings = { ...DEFAULTS, ...JSON.parse(readFileSync(settingsPath, 'utf8')) }; } catch { /* first run */ }
+  const argWork = process.argv.find((a) => a.startsWith('--cve-work='));
+  if (argWork) settings.work = argWork.split('=')[1];
   if (process.env.WORK) settings.work = process.env.WORK;   // env always wins (dev/smoke)
+  if (!Array.isArray(settings.recent)) settings.recent = [];
+}
+
+// Remember where the user has been working; the welcome screen offers these.
+function setWorkspace(dir) {
+  settings.work = dir;
+  settings.recent = [dir, ...settings.recent.filter((r) => r !== dir)].filter((r) => existsSync(r)).slice(0, 8);
+  saveSettings(); watchProject();
+  log('workspace', dir);
 }
 function saveSettings() {
   try { mkdirSync(dirname(settingsPath), { recursive: true }); writeFileSync(settingsPath, JSON.stringify(settings, null, 2)); } catch {}
@@ -49,6 +100,7 @@ const MIME = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp
 
 // Only files inside the current workspace may be served — the renderer cannot ask for /etc/passwd.
 function allowedPath(p) {
+  if (!settings.work) return null;
   const abs = resolve(p);
   const root = resolve(settings.work) + sep;
   return (abs + sep).startsWith(root) ? abs : null;
@@ -101,8 +153,29 @@ function createWindow() {
       spellcheck: false,
     },
   });
-  win.once('ready-to-show', () => win.show());
-  win.loadFile(join(ROOT, 'renderer/index.html'));
+  // Show immediately: a window that appears only on 'ready-to-show' is invisible while
+  // anything goes wrong, and a window that shows but never paints looks like a black box.
+  win.show();
+  const indexHtml = join(ROOT, 'renderer/index.html');
+  log('loadFile', indexHtml, 'exists=' + existsSync(indexHtml));
+  win.loadFile(indexHtml).catch((e) => log('loadFile REJECTED', e?.message || String(e)));
+
+  win.webContents.on('did-finish-load', () => log('did-finish-load'));
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    log('did-fail-load', code, desc, url);
+    showFatal(`The interface failed to load.\n${desc} (${code})\n${url}`);
+  });
+  win.webContents.on('render-process-gone', (_e, details) => {
+    log('render-process-gone', details);
+    if (details.reason !== 'clean-exit') {
+      showFatal(`The window crashed (${details.reason}).\nIt has been reloaded — if this repeats, open the log from Help → Open Log Folder.`);
+      setTimeout(() => { try { win?.reload(); } catch {} }, 400);
+    }
+  });
+  win.webContents.on('unresponsive', () => log('renderer unresponsive'));
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) log('renderer-console', `[${level}] ${message} (${sourceId}:${line})`);
+  });
   // Never let the renderer navigate away or open arbitrary windows.
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -113,6 +186,21 @@ function createWindow() {
   const wcId = win.webContents.id;                       // gone by the time 'closed' fires
   win.on('closed', () => { killTerm(wcId); win = null; });
   return win;
+}
+
+// A visible, readable failure beats a black window. Never leaves the user guessing.
+function showFatal(message) {
+  log('FATAL', message.replace(/\n/g, ' | '));
+  if (!win || win.isDestroyed()) return;
+  const body = `<!doctype html><meta charset="utf-8">
+  <style>body{margin:0;background:#0b0c10;color:#e6e6e6;font:14px/1.6 -apple-system,system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;height:100vh}
+  .b{max-width:640px;padding:28px 32px;border:1px solid #333;border-radius:12px;background:#14161c}
+  h1{font-size:16px;margin:0 0 10px;color:#e5533d}pre{white-space:pre-wrap;color:#bdbdbd;font-size:12px}
+  code{color:#c4d82e}</style>
+  <div class="b"><h1>Something went wrong</h1><pre>${message.replace(/[<&]/g, (c) => ({ '<': '&lt;', '&': '&amp;' }[c]))}</pre>
+  <pre>Log: <code>${logPath || 'n/a'}</code></pre></div>`;
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(body)).catch(() => {});
 }
 
 // ---------------------------------------------------------------- project I/O + watch
@@ -137,6 +225,7 @@ function watchProject() {
 const jobs = new Map();   // id -> utilityProcess
 
 function startRender(webContents, opts) {
+  if (!settings.work) return { error: 'no workspace open' };
   const id = opts.id || `r${Date.now()}`;
   const child = utilityProcess.fork(join(__dir, 'render-worker.cjs'), [], {
     serviceName: 'cve-render',
@@ -175,6 +264,48 @@ function cancelRender(id) {
   child.postMessage({ type: 'cancel' });
   setTimeout(() => { try { child.kill(); } catch {} }, 2000);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------- environment preflight
+// We deliberately do NOT bundle ffmpeg (see README § licensing): the app is Apache-2.0 and
+// shipping a GPL ffmpeg would infect it. So the external tools must be checked up front and
+// reported clearly, instead of failing three minutes into a render.
+function which(bin) {
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
+  for (const dir of (process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':')) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const p = join(dir, bin + ext);
+      try { if (existsSync(p)) return p; } catch {}
+    }
+  }
+  return null;
+}
+
+async function checkEnvironment() {
+  const { spawn } = await import('node:child_process');
+  const tools = {
+    ffmpeg: which('ffmpeg'),
+    ffprobe: which('ffprobe'),
+    python: which(settings.python) || which('python3'),
+  };
+  const engineOk = existsSync(join(settings.engine, 'render_project.py'));
+  let pillow = false;
+  if (tools.python) {
+    pillow = await new Promise((res) => {
+      const p = spawn(tools.python, ['-c', 'import PIL'], { env: process.env });
+      p.on('error', () => res(false));
+      p.on('close', (c) => res(c === 0));
+      setTimeout(() => { try { p.kill(); } catch {} res(false); }, 8000);
+    });
+  }
+  const missing = [];
+  if (!tools.ffmpeg) missing.push({ tool: 'ffmpeg', hint: process.platform === 'darwin' ? 'brew install ffmpeg' : 'winget install ffmpeg' });
+  if (!tools.ffprobe) missing.push({ tool: 'ffprobe', hint: 'ships with ffmpeg' });
+  if (!tools.python) missing.push({ tool: 'python3', hint: process.platform === 'darwin' ? 'brew install python' : 'winget install python' });
+  else if (!pillow) missing.push({ tool: 'Pillow (python)', hint: `${tools.python} -m pip install --user Pillow` });
+  if (!engineOk) missing.push({ tool: 'render engine', hint: 'install the video-edit skill at ' + settings.engine });
+  return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
 }
 
 // ---------------------------------------------------------------- audio generation
@@ -228,7 +359,7 @@ async function startTerm(wc) {
   if (pty) {
     try {
       const t = pty.spawn(shellPath, args, {
-        name: 'xterm-256color', cols: 100, rows: 30, cwd: settings.work, env,
+        name: 'xterm-256color', cols: 100, rows: 30, cwd: settings.work || app.getPath('home'), env,
       });
       t.onData((d) => !wc.isDestroyed() && wc.send('pty:data', d));
       t.onExit(() => !wc.isDestroyed() && wc.send('pty:exit'));
@@ -237,7 +368,7 @@ async function startTerm(wc) {
     } catch (e) { console.warn('[pty] fork failed → child_process fallback:', e.message); }
   }
   const { spawn } = await import('node:child_process');
-  const t = spawn(shellPath, process.platform === 'win32' ? [] : ['-i'], { cwd: settings.work, env });
+  const t = spawn(shellPath, process.platform === 'win32' ? [] : ['-i'], { cwd: settings.work || app.getPath('home'), env });
   t.stdout.on('data', (d) => !wc.isDestroyed() && wc.send('pty:data', d.toString()));
   t.stderr.on('data', (d) => !wc.isDestroyed() && wc.send('pty:data', d.toString()));
   t.on('close', () => !wc.isDestroyed() && wc.send('pty:exit'));
@@ -254,18 +385,27 @@ function killTerm(id) {
 // ---------------------------------------------------------------- ipc
 function registerIpc() {
   ipcMain.handle('config:get', () => ({
-    work: settings.work, project: projectPath(), engine: settings.engine,
+    work: settings.work, project: settings.work ? projectPath() : '', engine: settings.engine,
+    recent: settings.recent, hasWorkspace: !!settings.work,
     version: app.getVersion(), platform: process.platform, dev: isDev,
   }));
 
   ipcMain.handle('workspace:choose', async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: settings.work });
     if (r.canceled || !r.filePaths[0]) return { ok: false };
-    settings.work = r.filePaths[0]; saveSettings(); watchProject();
+    setWorkspace(r.filePaths[0]);
+    return { ok: true, work: settings.work };
+  });
+
+  ipcMain.handle('workspace:open', (_e, dir) => {
+    const d = String(dir || '');
+    if (!d || !existsSync(join(d, 'project.json'))) return { ok: false, error: 'no project.json in ' + d };
+    setWorkspace(d);
     return { ok: true, work: settings.work };
   });
 
   ipcMain.handle('project:get', () => {
+    if (!settings.work) return { error: 'no workspace open' };
     const p = projectPath();
     if (!existsSync(p)) return { error: 'no project.json in ' + settings.work };
     try { return JSON.parse(readFileSync(p, 'utf8')); }
@@ -273,11 +413,35 @@ function registerIpc() {
   });
 
   ipcMain.handle('project:save', (_e, data) => {
+    if (!settings.work) return { ok: false, error: 'no workspace open' };
     if (!data || typeof data !== 'object' || !data.meta) return { ok: false, error: 'refusing to save a malformed project' };
     try { writeFileSync(projectPath(), JSON.stringify(data, null, 2)); return { ok: true }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('env:check', () => checkEnvironment());
+
+  // Pick an overlay clip (HyperFrames MOV/WebM with alpha, or a PNG sequence's first frame).
+  ipcMain.handle('overlay:pick', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose an overlay clip',
+      defaultPath: settings.work ? join(settings.work, 'overlays') : undefined,
+      properties: ['openFile'],
+      filters: [{ name: 'Overlay clips', extensions: ['mov', 'webm', 'mp4', 'png'] }],
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false };
+    const p = r.filePaths[0];
+    // relative to the workspace when possible, so projects stay portable
+    const rel = settings.work && p.startsWith(resolve(settings.work) + sep) ? p.slice(resolve(settings.work).length + 1) : p;
+    let duration = 0;
+    try {
+      const { spawnSync } = await import('node:child_process');
+      const out = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', p], { encoding: 'utf8' });
+      duration = Math.round((parseFloat(out.stdout) || 0) * 100) / 100;
+    } catch {}
+    return { ok: true, path: rel, duration };
+  });
+  ipcMain.on('log:renderer', (_e, msg) => log('renderer', String(msg).slice(0, 800)));
   ipcMain.handle('render:start', (e, opts) => startRender(e.sender, opts || {}));
   ipcMain.handle('render:cancel', (_e, id) => cancelRender(id));
   ipcMain.handle('audio:generate', (_e, o) => generateAudio(o || {}));
@@ -292,18 +456,37 @@ function registerIpc() {
 }
 
 // ---------------------------------------------------------------- app lifecycle
-process.on('uncaughtException', (e) => console.error('[uncaught]', e?.stack || e));
+process.on('uncaughtException', (e) => { try { log('UNCAUGHT', e?.stack || String(e)); } catch { console.error(e); } });
+process.on('unhandledRejection', (e) => { try { log('UNHANDLED-REJECTION', e?.stack || String(e)); } catch {} });
 
 app.whenReady().then(async () => {
+  initLog();
   // Packaged GUI apps get a bare PATH (/usr/bin:/bin:…) — `claude`, `python3`, `ffmpeg`
   // from Homebrew/nvm would not resolve. Patch it once, before anything spawns.
-  try { (await import('fix-path')).default(); } catch (e) { console.warn('[fix-path]', e.message); }
+  // Never let this block startup: a slow/hanging login shell must not stop the window.
+  try {
+    await Promise.race([
+      import('fix-path').then((m) => m.default()),
+      new Promise((r) => setTimeout(r, 4000)),
+    ]);
+  } catch (e) { log('fix-path failed', e.message); }
+  ensureToolPaths();
+  log('PATH', process.env.PATH?.slice(0, 400));
   loadSettings();
+  log('settings', settings);
   registerMediaProtocol();
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   createWindow();
   watchProject();
+  // The self-test can also be driven from a packaged app:
+  //   open -a Cutwright.app --args --cve-smoke=ui,term --cve-out=/tmp/x
+  const argSmoke = process.argv.find((a) => a.startsWith('--cve-smoke='));
+  if (argSmoke) {
+    process.env.CVE_SMOKE = argSmoke.split('=')[1];
+    const argOut = process.argv.find((a) => a.startsWith('--cve-out='));
+    if (argOut) process.env.CVE_SMOKE_OUT = argOut.split('=')[1];
+  }
   if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -318,12 +501,27 @@ function buildMenu() {
     { label: 'File', submenu: [
       { label: 'Open Workspace…', accelerator: 'CmdOrCtrl+O', click: async () => {
         const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: settings.work });
-        if (!r.canceled && r.filePaths[0]) { settings.work = r.filePaths[0]; saveSettings(); watchProject(); win.webContents.send('workspace:changed', settings.work); }
+        if (!r.canceled && r.filePaths[0]) { setWorkspace(r.filePaths[0]); win.webContents.send('workspace:changed', settings.work); }
       } },
       mac ? { role: 'close' } : { role: 'quit' },
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
+    { role: 'help', submenu: [
+      { label: 'Open Log Folder', click: () => { try { shell.showItemInFolder(logPath); } catch {} } },
+      { label: 'Reload Window', click: () => { try { win?.reload(); } catch {} } },
+      { label: 'Check Environment…', click: async () => {
+        const env = await checkEnvironment();
+        dialog.showMessageBox(win, {
+          type: env.ok ? 'info' : 'warning',
+          message: env.ok ? 'All required tools found' : 'Missing tools',
+          detail: [`ffmpeg:  ${env.tools.ffmpeg || 'NOT FOUND'}`, `ffprobe: ${env.tools.ffprobe || 'NOT FOUND'}`,
+            `python:  ${env.tools.python || 'NOT FOUND'}${env.tools.python ? (env.pillow ? ' (Pillow ok)' : ' (Pillow MISSING)') : ''}`,
+            `engine:  ${env.engine} ${env.engineOk ? '' : '(NOT FOUND)'}`, '',
+            ...env.missing.map((m) => `→ ${m.tool}: ${m.hint}`)].join('\n'),
+        });
+      } },
+    ] },
   ]);
 }

@@ -5,7 +5,7 @@
 //   CVE_SMOKE=ui,render,term CVE_SMOKE_OUT=/tmp/smoke npm run dev
 //
 // Writes <out>.json (assertions) + <out>.png (screenshot) and exits with code 0/1.
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -68,6 +68,57 @@ export async function run({ win, app, settings }) {
       await wait(1500);
     }
 
+    if (want.includes('edit')) {
+      const { runEditTests } = await import('./selftest.mjs');
+      const r = await runEditTests({ win, settings });
+      check('editSuite', { passed: r.passed, total: r.total,
+        failures: r.results.filter((x) => !x.pass).map((x) => `${x.name}: ${x.error}`) });
+      report.editResults = r.results;
+    }
+
+    if (want.includes('cancel')) {
+      // A full export is minutes long: start it, let it get going, then kill it from the UI.
+      const r = await win.webContents.executeJavaScript(`(async () => {
+        const events = []; const off = window.editor.render.onEvent(e => events.push(e));
+        const t0 = Date.now();
+        const { id } = await window.editor.render.start({ out: 'cancel_test.mp4', range: null });
+        // wait until it is genuinely working (a progress tick or a log line)
+        while (Date.now() - t0 < 60000 && !events.some(e => e.type === 'progress' || e.type === 'log')) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+        const working = events.some(e => e.type === 'progress' || e.type === 'log');
+        await window.editor.render.cancel(id);
+        const ended = await new Promise(res => {
+          const iv = setInterval(() => {
+            const d = events.find(e => e.type === 'done' || e.type === 'error');
+            if (d) { clearInterval(iv); res(d); }
+            if (Date.now() - t0 > 120000) { clearInterval(iv); res({ type: 'timeout' }); }
+          }, 300);
+        });
+        off();
+        return { working, ended: ended.type, code: ended.code, seconds: Math.round((Date.now()-t0)/1000) };
+      })()`, true);
+      // nothing of ours may survive the cancel
+      const { execSync } = await import('node:child_process');
+      let strays = '';
+      try { strays = execSync("ps -ax -o pid,command | grep -i 'render_project.py' | grep -v grep || true", { encoding: 'utf8' }); } catch {}
+      check('cancel', { ...r, strayProcesses: strays.trim().split('\n').filter(Boolean).length });
+    }
+
+    if (want.includes('audiogen')) {
+      // real ElevenLabs call through the engine's audio_agent (costs a few credits)
+      const before = JSON.parse(readFileSync(settings.work + '/project.json', 'utf8'));
+      const r = await win.webContents.executeJavaScript(
+        `window.editor.generateAudio({ kind: 'sfx', text: 'short cinematic whoosh transition', at: 20 })`, true);
+      const after = JSON.parse(readFileSync(settings.work + '/project.json', 'utf8'));
+      const added = (after.audio?.sfx?.length || 0) - (before.audio?.sfx?.length || 0);
+      const layer = after.audio?.sfx?.slice(-1)[0];
+      const file = layer && (layer.src.startsWith('/') ? layer.src : settings.work + '/' + layer.src);
+      check('audioGen', { ok: !!r?.ok, added, layer, fileExists: !!file && existsSync(file),
+        bytes: file && existsSync(file) ? statSync(file).size : 0, error: r?.error?.slice?.(0, 200) });
+      writeFileSync(settings.work + '/project.json', JSON.stringify(before, null, 2));  // restore
+    }
+
     if (want.includes('render')) {
       const a = Number(process.env.CVE_SMOKE_A ?? 195);
       const b = Number(process.env.CVE_SMOKE_B ?? 203);
@@ -109,6 +160,9 @@ export async function run({ win, app, settings }) {
   const ok = !report.error
     && report.checks.project?.cues > 0
     && (!want.includes('render') || report.checks.render?.done?.code === 0)
+    && (!want.includes('cancel') || (report.checks.cancel?.working === true && report.checks.cancel?.strayProcesses === 0))
+    && (!want.includes('audiogen') || report.checks.audioGen?.ok === true)
+    && (!want.includes('edit') || report.checks.editSuite?.failures?.length === 0)
     && (!want.includes('term') || (report.checks.terminal?.sawAnswer === true && report.checks.claudeCli?.resolved === true));
   report.pass = !!ok;
   writeFileSync(out + '.json', JSON.stringify(report, null, 2));

@@ -33,15 +33,23 @@ ipcRenderer.on('workspace:changed', (_e, w) => { for (const cb of workspaceChang
 
 const on = (set) => (cb) => { if (typeof cb === 'function') { set.add(cb); return () => set.delete(cb); } return () => {}; };
 
+// Any uncaught renderer error lands in the app log — a black or half-dead window must
+// always leave a trace the user (or we) can read afterwards.
+window.addEventListener('error', (e) => ipcRenderer.send('log:renderer', `ERROR ${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => ipcRenderer.send('log:renderer', `REJECTION ${e.reason?.message || e.reason}`));
+
 contextBridge.exposeInMainWorld('editor', {
   // --- project / workspace ---
   config: () => ipcRenderer.invoke('config:get'),
   chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
+  openWorkspace: (dir) => ipcRenderer.invoke('workspace:open', str(dir)),
   getProject: () => ipcRenderer.invoke('project:get'),
   saveProject: (p) => ipcRenderer.invoke('project:save', p),
   onProjectChanged: on(projectChanged),
   onWorkspaceChanged: on(workspaceChanged),
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
+  checkEnvironment: () => ipcRenderer.invoke('env:check'),
+  pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
 
   // --- media (streamed by the privileged `cve://` scheme, with Range support) ---
   mediaUrl: (nameOrPath, bust) =>

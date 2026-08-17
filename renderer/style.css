@@ -54,3 +54,26 @@ color:var(--txt);border-radius:6px;padding:6px 8px;font-size:13px;font-family:in
 .tok.e{background:var(--coral);color:#fff;border-color:var(--coral)}
 .del{color:#ff6b6b;border-color:#5a2a2a;background:#2a1717}
 .small{font-size:11px;color:var(--muted)}
+
+/* preflight banner — the app does not bundle ffmpeg (Apache-2.0), so missing tools must be loud */
+.envbar { background: #7a2318; color: #ffd9d2; font-size: 12px; padding: 6px 14px;
+  border-bottom: 1px solid #a33; letter-spacing: .2px; }
+
+/* first-run / no-workspace state */
+.welcome { position: fixed; inset: 0; background: #0b0c10; z-index: 50; display: flex;
+  align-items: center; justify-content: center; }
+.welcome .wbox { max-width: 560px; padding: 34px 38px; border: 1px solid #23262e; border-radius: 14px;
+  background: #12141a; }
+.welcome h1 { margin: 0 0 12px; font-size: 20px; letter-spacing: .3px; }
+.welcome p { color: #9aa0aa; font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+.welcome code { color: #c4d82e; }
+.welcome .wsmall { font-size: 12px; color: #6c727c; margin-top: 18px; }
+.wrecent { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+.wrecent button { text-align: left; background: #181b22; border: 1px solid #262a33; color: #cfd3da;
+  font-size: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.wrecent button:hover { background: #1e222b; }
+
+.overlayclip { position: absolute; top: 4px; height: 22px; background: #5b46c9; color: #eae7ff;
+  border: 1px solid #7a68e0; border-radius: 6px; font-size: 10px; padding: 3px 6px; overflow: hidden;
+  white-space: nowrap; cursor: pointer; }
+.overlayclip.selected { outline: 2px solid #fff; }

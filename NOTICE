@@ -1,0 +1,35 @@
+Cutwright
+Copyright 2026 Avijit Sarkar
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+Bundled in the application:
+  Electron            MIT             https://github.com/electron/electron
+  @xterm/xterm        MIT             https://github.com/xtermjs/xterm.js
+  @xterm/addon-fit    MIT             https://github.com/xtermjs/xterm.js
+  node-pty            MIT             https://github.com/microsoft/node-pty
+  fix-path            MIT             https://github.com/sindresorhus/fix-path
+
+NOT bundled — required at runtime, installed by the user:
+  FFmpeg / ffprobe    LGPL or GPL depending on the user's own build
+  Python 3 + Pillow   PSF / HPND (MIT-like)
+
+Cutwright deliberately does NOT ship an FFmpeg binary. Common prebuilt FFmpeg
+distributions (ffmpeg-static, gyan.dev, evermeet, most Homebrew bottles) are
+compiled with --enable-gpl (x264/x265); redistributing one inside this
+Apache-2.0 application would place the combined distribution under the GPL.
+Cutwright therefore invokes whatever FFmpeg the user has installed, as a separate
+process, and tells them how to install it if it is missing. If a future release
+wants a bundled binary, it must be a custom LGPL build (no --enable-gpl, no
+x264/x265) relying on hardware encoders — see docs/decisions/0002-ffmpeg-licensing.md.
+
+"Claude" and "Claude Code" are trademarks of Anthropic PBC. Cutwright is an
+independent open-source project and is not affiliated with, endorsed by, or
+sponsored by Anthropic. It integrates with the Claude Code CLI, which the user
+installs separately.

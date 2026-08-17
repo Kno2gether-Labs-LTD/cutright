@@ -1,13 +1,12 @@
 {
-  "name": "claude-video-editor",
-  "productName": "Claude Video Editor",
+  "name": "cutwright",
+  "productName": "Cutwright",
   "version": "0.1.0",
-  "description": "Agent-driven desktop video editor: Claude edits project.json (edit-as-data) → editable timeline → deterministic render.",
+  "description": "Cutwright — an agent-driven desktop video editor. The edit is data (project.json); works with Claude Code in a side terminal.",
   "type": "module",
   "main": "electron/main.js",
   "author": "Avijit Sarkar",
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "rebuild": "electron-rebuild -f -w node-pty",
@@ -30,8 +29,8 @@
     "electron-builder": "26.15.3"
   },
   "build": {
-    "appId": "com.avijitsarkar.claudevideoeditor",
-    "productName": "Claude Video Editor",
+    "appId": "com.avijitsarkar.cutwright",
+    "productName": "Cutwright",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -65,7 +64,7 @@
       "icon": "build/icon.icns"
     },
     "dmg": {
-      "title": "Claude Video Editor ${version}"
+      "title": "Cutwright ${version}"
     },
     "win": {
       "target": [
