@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('editor', {
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),
   pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
+  autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
+    noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
+    minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,
+    softFillers: !!o.softFillers,
+  }),
 
   // --- media (streamed by the privileged `cve://` scheme, with Range support) ---
   mediaUrl: (nameOrPath, bust) =>

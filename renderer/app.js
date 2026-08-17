@@ -262,6 +262,7 @@ function initTimelineInteraction() {
   $('#btnZoomIn').onclick = () => setZoom(zoom * 1.5);
   $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
   $('#btnFit').onclick = () => { fitZoom(); renderTimeline(); $('#tlScroll').scrollLeft = 0; };
+  $('#btnAutoCut').onclick = () => runAutoCut();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -523,6 +524,118 @@ async function genAudio() {
   else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
 }
 
+// ---------------------------------------------------------------- auto-cut
+// Two signals, one answer: ffmpeg silencedetect for real dead air, the word-level
+// transcript for fillers/stutters (and to guarantee we never clip speech).
+let autocut = { proposals: [], stats: null, opts: { minSilence: 0.7, pad: 0.15, noiseDb: -35, fillers: true, stutters: true, softFillers: false } };
+
+async function runAutoCut() {
+  if (!project) return;
+  setStatus('Analysing audio and transcript…', 'working');
+  $('#btnAutoCut').disabled = true;
+  const r = await E.autoCut(autocut.opts);
+  $('#btnAutoCut').disabled = false;
+  if (r.error) { setStatus('Auto-cut failed: ' + r.error, 'error'); return; }
+  autocut.proposals = r.proposals.map((p) => ({ ...p, take: p.confidence !== 'low' }));
+  autocut.stats = r.stats;
+  setStatus(`Auto-cut found ${r.proposals.length} places to trim (${r.stats.removedSeconds}s)`, 'ok');
+  renderAutoCutPanel();
+}
+
+function renderAutoCutPanel() {
+  const box = $('#inspector');
+  box.innerHTML = '';
+  $('#selBadge').textContent = 'auto-cut';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'auto-cut';
+  const when = document.createElement('span'); when.textContent = `${autocut.proposals.length} proposals`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+
+  const st = autocut.stats || {};
+  const sum = document.createElement('div'); sum.className = 'ac-summary';
+  const taken = autocut.proposals.filter((p) => p.take);
+  const removed = taken.reduce((a, p) => a + (p.end - p.start), 0);
+  sum.innerHTML = `Selected <b>${taken.length}</b> of ${autocut.proposals.length} · removes <b>${removed.toFixed(1)}s</b>` +
+    ` · new length <b>${fmt(Math.max(0, dur - removed))}</b> (from ${fmt(dur)})` +
+    `<br><span class="dim">${st.silences || 0} silences · ${st.words || 0} transcript words</span>`;
+  wrap.appendChild(sum);
+
+  // tuning
+  const controls = document.createElement('div'); controls.className = 'ac-controls';
+  controls.append(
+    field('Min silence (s)', autocut.opts.minSilence, (v) => { autocut.opts.minSilence = +v; }, 'number'),
+    field('Keep pad (s)', autocut.opts.pad, (v) => { autocut.opts.pad = +v; }, 'number'),
+  );
+  wrap.appendChild(controls);
+  const presets = document.createElement('div'); presets.className = 'btnrow';
+  const preset = (name, o) => btn(name, () => { Object.assign(autocut.opts, o); runAutoCut(); });
+  presets.append(
+    preset('Gentle', { minSilence: 1.2, pad: 0.25, noiseDb: -38, fillers: true, stutters: false, softFillers: false }),
+    preset('Balanced', { minSilence: 0.7, pad: 0.15, noiseDb: -35, fillers: true, stutters: true, softFillers: false }),
+    preset('Tight', { minSilence: 0.45, pad: 0.08, noiseDb: -32, fillers: true, stutters: true, softFillers: true }),
+  );
+  wrap.appendChild(presets);
+
+  const toggles = document.createElement('div'); toggles.className = 'btnrow';
+  const tog = (label, key) => btn(`${autocut.opts[key] ? '✓' : '✗'} ${label}`, () => { autocut.opts[key] = !autocut.opts[key]; renderAutoCutPanel(); });
+  toggles.append(tog('fillers', 'fillers'), tog('stutters', 'stutters'), tog('“like/actually”', 'softFillers'),
+    btn('Re-analyse', () => runAutoCut()));
+  wrap.appendChild(toggles);
+
+  // proposals
+  const list = document.createElement('div'); list.className = 'ac-list';
+  autocut.proposals.forEach((p, i) => {
+    const row = document.createElement('div'); row.className = 'ac-item';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = p.take;
+    cb.onclick = (ev) => { ev.stopPropagation(); p.take = cb.checked; renderAutoCutPanel(); };
+    const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(p.start);
+    const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = p.label;
+    const rsn = document.createElement('span'); rsn.className = 'rsn ' + p.reason; rsn.textContent = p.reason;
+    row.append(cb, t, lbl, rsn);
+    row.onclick = () => { video.currentTime = clamp(p.start - 0.6, 0, dur); video.play().catch(() => {});
+      setTimeout(() => video.pause(), Math.min(4000, (p.end - p.start + 1.4) * 1000)); };
+    row.title = `${p.start}s → ${p.end}s · ${p.confidence} confidence · click to hear it`;
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+
+  const actions = document.createElement('div'); actions.className = 'btnrow';
+  actions.append(
+    btn('Select all', () => { autocut.proposals.forEach((p) => { p.take = true; }); renderAutoCutPanel(); }),
+    btn('Select none', () => { autocut.proposals.forEach((p) => { p.take = false; }); renderAutoCutPanel(); }),
+    btn(`Apply ${taken.length} cuts`, applyAutoCut, 'primary'),
+  );
+  wrap.appendChild(actions);
+  wrap.appendChild(hint('Applying adds these to the Cuts track. Nothing is destroyed — remove any cut on the timeline to get the moment back. Export splices the video and re-times every caption, scene, overlay and audio layer.'));
+  box.appendChild(wrap);
+}
+
+function applyAutoCut() {
+  const taken = autocut.proposals.filter((p) => p.take);
+  if (!taken.length) return;
+  project.cuts = project.cuts || [];
+  taken.forEach((p) => project.cuts.push({ start: p.start, end: p.end, source: 'auto:' + p.reason }));
+  project.cuts.sort((a, b) => a.start - b.start);
+  // merge anything that now overlaps, so the engine never sees nested cuts
+  const merged = [];
+  for (const c of project.cuts) {
+    const last = merged[merged.length - 1];
+    if (last && c.start <= last.end + 0.02) last.end = Math.max(last.end, c.end);
+    else merged.push({ ...c });
+  }
+  project.cuts = merged;
+  autocut.proposals = autocut.proposals.filter((p) => !p.take);
+  save(); renderTimeline();
+  setStatus(`Applied ${taken.length} cuts — export to see them`, 'ok');
+  renderAutoCutPanel();
+}
+
 // ---------------------------------------------------------------- render / export
 let offRender = null;
 function runRender({ range, out, label }) {
@@ -586,6 +699,7 @@ function initKeys() {
       case '=': case '+': setZoom(zoom * 1.5); break;
       case '-': case '_': setZoom(zoom / 1.5); break;
       case 'f': case 'F': fitZoom(); renderTimeline(); break;
+      case 'a': case 'A': runAutoCut(); break;
       case 'p': case 'P': $('#btnPreview').click(); break;
       case 'e': case 'E': $('#btnExport').click(); break;
       default: return;

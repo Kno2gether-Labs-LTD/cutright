@@ -265,6 +265,63 @@ export async function runEditTests({ win, settings }) {
     return r;
   });
 
+  // ---------------------------------------------------------------- auto-cut
+  await test('auto-cut: every proposed silence is genuinely silent in the audio', async () => {
+    const r = await js(`(async () => {
+      const t0 = Date.now();
+      const res = await window.editor.autoCut({ minSilence: 0.6, pad: 0.15, noiseDb: -35, fillers: true, stutters: true });
+      return { ...res, seconds: Math.round((Date.now() - t0) / 1000) };
+    })()`, true);
+    expect(!r.error, 'auto-cut errored: ' + r.error);
+    expect(Array.isArray(r.proposals) && r.proposals.length > 0, 'auto-cut found nothing at all');
+    expect(r.proposals.every((p) => p.end > p.start), 'a proposal has a non-positive length');
+
+    // Ground truth: measure the actual loudness of each proposed silence with ffmpeg.
+    // (This is the claim that matters — "there is nothing to hear here".)
+    const { execFileSync } = await import('node:child_process');
+    const media = settings.work + '/graded_master.mp4';
+    const checked = [];
+    for (const p of r.proposals.filter((x) => x.reason === 'silence').slice(0, 6)) {
+      let mean = -99;
+      try {
+        const out = execFileSync('ffmpeg', ['-hide_banner', '-nostats', '-ss', String(p.start),
+          '-to', String(p.end), '-i', media, '-af', 'volumedetect', '-f', 'null', '-'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        mean = parseFloat((/mean_volume:\s*(-?[\d.]+)/.exec(out) || [])[1] ?? -99);
+      } catch (e) {
+        const out = String(e.stderr || '');
+        mean = parseFloat((/mean_volume:\s*(-?[\d.]+)/.exec(out) || [])[1] ?? -99);
+      }
+      checked.push({ ...p, mean });
+    }
+    const loud = checked.filter((c) => c.mean > -30);
+    expect(loud.length === 0, `proposed cutting audible audio: ${JSON.stringify(loud.slice(0, 2))}`);
+    return { proposals: r.proposals.length, removed: r.stats?.removedSeconds, seconds: r.seconds,
+             reasons: [...new Set(r.proposals.map((p) => p.reason))],
+             verifiedSilences: checked.map((c) => ({ at: c.start, meanDb: c.mean })) };
+  });
+
+  await test('auto-cut: the panel applies selected cuts and merges overlaps', async () => {
+    const before = (disk().cuts || []).length;
+    const r = await js(`(async () => {
+      document.querySelector('#btnAutoCut').click();
+      for (let i = 0; i < 60 && !document.querySelector('.ac-list'); i++) await new Promise(r => setTimeout(r, 500));
+      const rows = document.querySelectorAll('.ac-item').length;
+      // take only the first two proposals
+      document.querySelectorAll('.ac-item input').forEach((cb, i) => { if (cb.checked !== (i < 2)) cb.click(); });
+      const apply = [...document.querySelectorAll('#inspector button')].find(b => /^Apply/.test(b.textContent));
+      const label = apply.textContent; apply.click();
+      return { rows, label };
+    })()`, true);
+    await settle();
+    const after = disk().cuts || [];
+    expect(r.rows > 0, 'the auto-cut panel listed no proposals');
+    expect(after.length > before, `cuts did not grow: ${before} → ${after.length}`);
+    expect(after.every((c, i) => i === 0 || c.start > after[i - 1].end), 'applied cuts overlap');
+    expect(after.some((c) => String(c.source || '').startsWith('auto:')), 'applied cuts are not tagged with their source');
+    return { before, after: after.length, applied: r.label };
+  });
+
   // ---------------------------------------------------------------- agent loop
   await test('auto-reload: an external edit to project.json reaches the UI', async () => {
     const p = disk();

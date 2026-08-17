@@ -308,6 +308,44 @@ async function checkEnvironment() {
   return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
 }
 
+// ---------------------------------------------------------------- analysis (auto-cut)
+// Runs in its own utilityProcess: it shells out to ffmpeg, so it must not sit on main.
+function analyzeCuts(opts = {}) {
+  return new Promise((resolve) => {
+    if (!settings.work) return resolve({ error: 'no workspace open' });
+    let project = {};
+    try { project = JSON.parse(readFileSync(projectPath(), 'utf8')); } catch (e) { return resolve({ error: 'no project.json' }); }
+
+    const child = utilityProcess.fork(join(__dir, 'analysis-worker.cjs'), [], {
+      serviceName: 'cve-analysis', stdio: 'pipe', env: { ...process.env },
+    });
+    let settled = false;
+    const finish = (v) => { if (settled) return; settled = true; try { child.kill(); } catch {} resolve(v); };
+
+    child.stderr?.on('data', (d) => log('[analysis!]', d.toString().trim().slice(0, 300)));
+    child.on('message', (m) => {
+      if (m?.type === 'result') finish({ ok: true, ...m });
+      else if (m?.type === 'error') finish({ error: m.error });
+    });
+    child.on('exit', () => finish({ error: 'analysis worker exited' }));
+    setTimeout(() => finish({ error: 'analysis timed out' }), 10 * 60 * 1000);
+
+    child.postMessage({ type: 'analyze', job: {
+      work: settings.work,
+      media: project?.meta?.graded || 'graded_master.mp4',
+      transcript: 'transcript.json',
+      duration: project?.meta?.duration || 0,
+      noiseDb: Number(opts.noiseDb ?? -32),
+      minSilence: Number(opts.minSilence ?? 0.7),
+      pad: Number(opts.pad ?? 0.12),
+      minCut: Number(opts.minCut ?? 0.35),
+      fillers: opts.fillers !== false,
+      stutters: opts.stutters !== false,
+      softFillers: !!opts.softFillers,
+    } });
+  });
+}
+
 // ---------------------------------------------------------------- audio generation
 function generateAudio({ kind, text, at }) {
   return new Promise((res) => {
@@ -420,6 +458,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('env:check', () => checkEnvironment());
+  ipcMain.handle('analysis:autocut', (_e, o) => analyzeCuts(o || {}));
 
   // Pick an overlay clip (HyperFrames MOV/WebM with alpha, or a PNG sequence's first frame).
   ipcMain.handle('overlay:pick', async () => {
