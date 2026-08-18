@@ -966,6 +966,8 @@ export async function runEditTests({ win, settings }) {
         after = await js(`(async () => ({ work: (await window.editor.config()).work,
           title: window.__cve.project?.meta?.title,
           scenes: window.__cve.project?.scenes?.length,
+          homeCovering: !document.querySelector('#home')?.hidden,
+          timelineVisible: !!document.querySelector('#laneScenes .clip'),
           ready: !!window.__cve.project }))()`);
         if (after?.ready && after.work === other && after.title === 'THE OTHER PROJECT') break;
       } catch { /* mid-reload */ }
@@ -973,6 +975,11 @@ export async function runEditTests({ win, settings }) {
     expect(after?.work === other, `the app is still on ${after?.work} (wanted ${other})`);
     expect(after?.title === 'THE OTHER PROJECT', 'the window did not reload onto the new project');
     expect(after?.scenes === 1, `the timeline still shows the old project's scenes: ${after?.scenes}`);
+    // The bug this catches: the project loads, but Home is still covering the editor, so
+    // the click reads as "nothing happened" and the user clicks again and again.
+    expect(after?.homeCovering === false,
+      'the project opened but Home is still covering the editor');
+    expect(after?.timelineVisible === true, 'the timeline is not showing the opened project');
 
     // Put the original project back and PROVE it: leaving the app pointed at a temp
     // folder would poison everything that runs afterwards.
