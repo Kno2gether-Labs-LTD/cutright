@@ -329,6 +329,8 @@ function initTimelineInteraction() {
   $('#btnTemplates').onclick = () => openTemplatesPanel();
   $('#btnLook').onclick = () => openLookPanel();
   $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
+  $('#btnStartAgent').onclick = () => startAgentEdit();
+  $('#btnAgentBrief').onclick = () => showAgentBrief();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -1144,6 +1146,63 @@ function openLookPanel() {
   box.appendChild(hint('Grain 0–40, vignette and bloom 0–1. The look is applied when rendering, over the graded master — nothing is baked in, so you can change your mind at any time.'));
 }
 
+// ---------------------------------------------------------------- the agent hand-off
+// The UI records intent; the agent does the editing. These two buttons are the seam.
+function startAgentEdit() {
+  // Bypass mode by default: the agent is working inside the user's own project folder and
+  // a permission prompt per file edit makes the loop unusable. The user starts it knowingly.
+  E.term.write('claude --dangerously-skip-permissions\r');
+  setStatus('Starting the agent — then type what you want, e.g. “edit my video”', 'working');
+  setTimeout(() => E.term.write('Edit my video. Read CLAUDE.md and project.json first.\r'), 4000);
+}
+
+async function showAgentBrief() {
+  const brief = await E.templates.getBrief();
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'brief';
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'agent brief';
+  title.append(kind);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  if (!brief) {
+    box.appendChild(hint('No brief yet — pick a template and the app will write one.'));
+    box.appendChild(btnRow(btn('Choose a template', () => openTemplatesPanel(), 'primary')));
+    return;
+  }
+
+  box.appendChild(hint('This is what the agent has been told. It lives in project.json → brief, and is mirrored into CLAUDE.md and AGENTS.md so any agent picks it up.'));
+
+  const b = document.createElement('div'); b.className = 'brief-box';
+  b.innerHTML = `Template <b>${brief.template.name}</b><br>` +
+    `Scene types it may use: <b>${brief.capabilities.scenes.length}</b> · ` +
+    `motion-graphics presets: <b>${brief.capabilities.overlays.length}</b><br>` +
+    `Generated audio: <b>${brief.capabilities.mediaGeneration.audio.configured ? 'ElevenLabs ready' : 'not configured'}</b>`;
+  box.appendChild(b);
+
+  box.appendChild(sep());
+  box.appendChild(sechead('What you want (the agent reads this)'));
+  const f = field('Your intent, in plain English', brief.intent || '', () => {});
+  const input = f.querySelector('input');
+  input.placeholder = 'e.g. punchy 2-minute cut, heavy on captions, one title card per chapter';
+  box.appendChild(f);
+  box.appendChild(btnRow(
+    btn('Save intent', async () => {
+      const r = await E.templates.setIntent(input.value);
+      setStatus(r?.ok ? 'Brief updated — the agent will read it' : 'Could not save', r?.ok ? 'ok' : 'error');
+    }, 'primary'),
+    btn('▶ Hand it to the agent', () => startAgentEdit()),
+  ));
+
+  box.appendChild(sep());
+  box.appendChild(sechead('The agent is asked to'));
+  const ul = document.createElement('ul'); ul.className = 'brief-list';
+  brief.handoff.agentShouldDo.forEach((t) => { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+  box.appendChild(ul);
+}
+
 // ---------------------------------------------------------------- templates
 // A template gives the project its look (caption defaults + scene style) and brings a set
 // of motion-graphics presets you can render straight onto the Overlays track.
@@ -1185,7 +1244,12 @@ function renderTemplatesPanel() {
     card.append(thumb, meta);
     card.onclick = async () => {
       const r = await E.templates.apply(t.id);
-      if (r.ok) { await loadProject(); setStatus(`Template “${t.name}” applied`, 'ok'); renderTemplatesPanel(); }
+      if (r.ok) {
+        await loadProject();
+        const b = r.brief || {};
+        setStatus(`“${t.name}” applied — agent briefed with ${b.presets ?? '?'} presets and ${b.sceneTypes ?? '?'} scene types`, 'ok');
+        renderTemplatesPanel();
+      }
       else setStatus('Could not apply template: ' + r.error, 'error');
     };
     grid.appendChild(card);

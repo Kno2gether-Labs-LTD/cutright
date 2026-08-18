@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('editor', {
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
     apply: (id) => ipcRenderer.invoke('templates:apply', str(id)),
+    getBrief: () => ipcRenderer.invoke('brief:get'),
+    setIntent: (text) => ipcRenderer.invoke('brief:setIntent', str(text)),
     renderPreset: (o = {}) => ipcRenderer.invoke('templates:renderPreset', {
       template: str(o.template), preset: str(o.preset),
       vars: o.vars && typeof o.vars === 'object' ? o.vars : {},

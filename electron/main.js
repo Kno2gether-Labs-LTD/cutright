@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
+import { writeAgentFiles } from './brief.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -110,11 +111,24 @@ function loadSettings() {
 let openEditorNext = false;
 
 // Remember where the user has been working; the welcome screen offers these.
+function refreshAgentBrief() {
+  try {
+    if (!settings.work || !existsSync(projectPath())) return;
+    const p = JSON.parse(readFileSync(projectPath(), 'utf8'));
+    const wanted = p?.meta?.template || p?.brief?.template?.id || 'coral-ink-bone';
+    const t = listTemplates().find((x) => x.id === wanted) || listTemplates()[0];
+    if (!t) return;
+    writeAgentFiles({ work: settings.work, template: t, appVersion: app.getVersion(),
+      templatesDir: join(RES, 'templates'), enginePath: settings.engine });
+  } catch (e) { log('brief refresh skipped:', e.message); }
+}
+
 function setWorkspace(dir, { fromUser = true } = {}) {
   if (fromUser) openEditorNext = true;
   settings.work = dir;
   settings.recent = [dir, ...settings.recent.filter((r) => r !== dir)].filter((r) => existsSync(r)).slice(0, 8);
   saveSettings(); watchProject();
+  refreshAgentBrief();
   log('workspace', dir, fromUser ? '(user opened → straight to the editor)' : '');
 }
 function saveSettings() {
@@ -463,7 +477,14 @@ function applyTemplate(id) {
     p.captions = p.captions || { defaults: {}, cues: [] };
     p.captions.defaults = { ...p.captions.defaults, ...(t.captions || {}) };
     writeFileSync(projectPath(), JSON.stringify(p, null, 2));
-    return { ok: true, template: t.id, captions: p.captions.defaults };
+
+    // Choosing a template is a briefing act: record what the agent may use and how.
+    const briefed = writeAgentFiles({
+      work: settings.work, template: t, appVersion: app.getVersion(),
+      templatesDir: join(RES, 'templates'), enginePath: settings.engine,
+    });
+    log('briefed the agent', JSON.stringify(briefed));
+    return { ok: true, template: t.id, captions: p.captions.defaults, brief: briefed };
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
@@ -767,6 +788,20 @@ function registerIpc() {
     tokens: t.tokens, overlays: (t.overlays || []).map((o) => ({ id: o.id, name: o.name, duration: o.duration, vars: o.vars || [] })),
   })));
   ipcMain.handle('templates:apply', (_e, id) => applyTemplate(String(id)));
+  ipcMain.handle('brief:setIntent', (_e, text) => {
+    try {
+      const p = JSON.parse(readFileSync(projectPath(), 'utf8'));
+      p.brief = p.brief || {};
+      p.brief.intent = String(text || '').slice(0, 500);
+      writeFileSync(projectPath(), JSON.stringify(p, null, 2));
+      refreshAgentBrief();
+      return { ok: true, intent: p.brief.intent };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('brief:get', () => {
+    try { return JSON.parse(readFileSync(projectPath(), 'utf8')).brief || null; }
+    catch { return null; }
+  });
   ipcMain.handle('templates:renderPreset', (e, o) => renderPreset(e.sender, o || {}));
   ipcMain.handle('templates:openFolder', () => {
     const dir = join(app.getPath('userData'), 'templates');
@@ -848,6 +883,8 @@ app.whenReady().then(async () => {
   log('PATH', process.env.PATH?.slice(0, 400));
   loadSettings();
   log('settings', settings);
+  // Keep the agent brief current for whatever project we are opening, however it was chosen.
+  refreshAgentBrief();
   registerMediaProtocol();
   registerIpc();
   Menu.setApplicationMenu(buildMenu());

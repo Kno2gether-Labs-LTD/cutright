@@ -466,3 +466,12 @@ select:focus { outline: none; border-color: #46506a; }
 @media (max-width: 900px) {
   .hero, .feats, .promo-grid { grid-template-columns: 1fr; }
 }
+
+.term-head { display: flex; align-items: center; gap: 8px; }
+.term-head > span:first-child { flex: 1; text-transform: uppercase; letter-spacing: .6px; }
+.agentbtn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.agentbtn:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+.brief-box { background: #14171d; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  font-size: 11.5px; line-height: 1.6; }
+.brief-box b { color: var(--accent); }
+.brief-list { margin: 6px 0 0; padding-left: 16px; color: var(--dim); }

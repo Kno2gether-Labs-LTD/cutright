@@ -653,6 +653,56 @@ export async function runEditTests({ win, settings }) {
     return { cut, types: r.options.length };
   });
 
+  // ---------------------------------------------------------------- the agent brief
+  await test('brief: choosing a template writes instructions the agent can act on', async () => {
+    const r = await js(`window.editor.templates.apply('midnight-chalk')`, true);
+    await settle();
+    const p = disk();
+    expect(r?.ok === true, 'apply failed: ' + r?.error);
+    const b = p.brief;
+    expect(!!b, 'no brief was written into project.json');
+    expect(b.template.id === 'midnight-chalk', 'the brief names the wrong template: ' + b.template?.id);
+    expect(b.capabilities.scenes.length > 0, 'the brief lists no scene types');
+    expect(b.capabilities.overlays.length > 0, 'the brief lists no motion-graphics presets');
+    expect(b.capabilities.overlays.every((o) => /hyperframes render/.test(o.render)),
+      'a preset has no render command the agent could run');
+    expect(/render_project\.py/.test(b.commands.export), 'no export command in the brief');
+    expect(b.handoff.agentShouldDo.length >= 3, 'the brief does not say what the agent should do');
+    expect(!!b.capabilities.mediaGeneration, 'no media-generation section (the extension point)');
+
+    // the same content must reach BOTH agent files
+    for (const f of ['CLAUDE.md', 'AGENTS.md']) {
+      const md = readFileSync(join(settings.work, f), 'utf8');
+      expect(/Midnight Chalk/.test(md), `${f} does not mention the chosen template`);
+      expect(/project\.json/.test(md) && /edit my video/i.test(md), `${f} is missing the job description`);
+      expect(/chalk-lower-third/.test(md), `${f} does not list the presets the agent may render`);
+    }
+    const a = readFileSync(join(settings.work, 'CLAUDE.md'), 'utf8');
+    const c = readFileSync(join(settings.work, 'AGENTS.md'), 'utf8');
+    expect(a === c, 'CLAUDE.md and AGENTS.md have drifted apart');
+
+    // put the original template back
+    await js(`window.editor.templates.apply('coral-ink-bone')`, true);
+    await settle();
+    return { template: b.template.id, presets: b.capabilities.overlays.length,
+             sceneTypes: b.capabilities.scenes.length, docBytes: a.length };
+  });
+
+  await test('brief: the user intent survives a template change', async () => {
+    await js(`window.editor.templates.setIntent('punchy two-minute cut, one title card per chapter')`, true);
+    await settle();
+    expect(/punchy two-minute/.test(disk().brief.intent), 'intent was not saved');
+    await js(`window.editor.templates.apply('midnight-chalk')`, true);
+    await settle();
+    expect(/punchy two-minute/.test(disk().brief.intent), 'changing the template wiped the user intent');
+    const md = readFileSync(join(settings.work, 'CLAUDE.md'), 'utf8');
+    expect(/punchy two-minute/.test(md), 'the intent never reached the agent doc');
+    await js(`window.editor.templates.apply('coral-ink-bone')`, true);
+    await js(`window.editor.templates.setIntent('')`, true);
+    await settle();
+    return { intentSurvived: true };
+  });
+
   // ---------------------------------------------------------------- templates
   await test('templates: both packs load with previews and presets', async () => {
     const r = await js(`(async () => {
