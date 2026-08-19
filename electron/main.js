@@ -317,6 +317,9 @@ function startRender(webContents, opts) {
       project: projectPath(),
       out: join(settings.work, basename(opts.out || 'preview.mp4')),
       range: opts.range || null,
+      // Layered export: the same edit written out as picture / graphics / captions / sound as
+      // well as the flat file, for review or for finishing somewhere else.
+      layers: opts.layers ? 'layers' : '',
       work: settings.work,
       engine: settings.engine,
       python: settings.python,

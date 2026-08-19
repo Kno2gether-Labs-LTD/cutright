@@ -94,6 +94,7 @@ function start(j) {
 
   const args = [engineScript, '--project', job.project, '--out', job.out, '--tmp', tmpDir];
   if (job.range) args.push('--range', String(job.range[0]), String(job.range[1]));
+  if (job.layers) args.push('--layers', job.layers);
 
   post({ type: 'start', id: job.id, out: job.out, range: job.range, span, args: args.slice(1) });
 

@@ -10,7 +10,7 @@ The intended flow, and what actually exists today.
 | 4 | **Preprocess — one action that does 2 and 3 and writes it all down** | ✅ **Prepare** in the toolbar: transcribe → cut → decide who has the frame → apply the pack → size the panels, every decision written into `project.json` with its reason |
 | 5 | **Final edit — motion graphics, music, SFX** | ⚠️ the agent does this from the brief; audio generation exists but is not part of a flow |
 | 6 | **Agent verification** | ✅ `engine/verify_project.py` — the mistakes only a render would otherwise reveal, each with what to do about it. **Check** in the toolbar; the agent is told to run it before saying it is finished |
-| 7 | **Layered save, then render** | ❌ the render is flattened |
+| 7 | **Layered save, then render** | ✅ `--layers` (the **Layers** tick beside Export): picture / graphics / captions / voice / generated sound, the last with alpha. Stacked in order they *are* the flat render — checked by stacking them and measuring |
 
 ## The camera is a track
 

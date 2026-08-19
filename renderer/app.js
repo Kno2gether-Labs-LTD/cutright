@@ -2026,7 +2026,7 @@ function applyAutoCut() {
 
 // ---------------------------------------------------------------- render / export
 let offRender = null;
-function runRender({ range, out, label }) {
+function runRender({ range, out, label, layers = false }) {
   setStatus(label + '…', 'working');
   busy(true);
   offRender?.();
@@ -2047,7 +2047,7 @@ function runRender({ range, out, label }) {
       } else setStatus(`${label} failed (exit ${m.code}) — ${String(m.tail || '').slice(-140)}`, 'error');
     }
   });
-  E.render.start({ out, range }).then((r) => { job = r.id; });
+  E.render.start({ out, range, layers }).then((r) => { job = r.id; });
 
   function finish() { busy(false); offRender?.(); offRender = null; job = null; }
 }
@@ -2066,7 +2066,8 @@ $('#btnPreview').onclick = () => {
   const e = elemOf(sel);
   previewAround(e ? (e.start || 0) : video.currentTime, e?.dur);
 };
-$('#btnExport').onclick = () => runRender({ range: null, out: 'FINAL.mp4', label: 'Export' });
+$('#btnExport').onclick = () => runRender({ range: null, out: 'FINAL.mp4', label: 'Export',
+  layers: !!$('#chkLayers')?.checked });
 
 // ---------------------------------------------------------------- keyboard
 function initKeys() {

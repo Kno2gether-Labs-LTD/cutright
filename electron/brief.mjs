@@ -152,6 +152,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
     commands: {
       previewRange: `python3 "${enginePath}/render_project.py" --project project.json --range <start> <end> --out preview.mp4`,
       export: `python3 "${enginePath}/render_project.py" --project project.json --out FINAL.mp4`,
+      exportLayered: `python3 "${enginePath}/render_project.py" --project project.json --out FINAL.mp4 --layers layers`,
       transcribe: 'npx hyperframes transcribe <audio-or-video> --json -d .',
       verify: `python3 "${enginePath}/verify_project.py" --project project.json`,
       sfx: `python3 "${enginePath}/audio_agent.py" sfx --prompt "<sound>" --at <seconds> --dur 2 --project project.json`,
@@ -185,6 +186,10 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
         'set the final grade and audio polish',
       ],
       humanDecides: 'the final export, and anything that changes what the video says',
+      handBack: 'When the user wants to review or finish elsewhere, export with --layers: the picture, '
+              + 'the graphics and the captions come out as separate files (the last two with alpha) '
+              + 'alongside the voice and every generated sound. Stacked in order they are the flat '
+              + 'render, so what they review is what was made, not another interpretation of it.',
     },
 
     rules: [

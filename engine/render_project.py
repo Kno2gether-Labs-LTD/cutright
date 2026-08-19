@@ -53,6 +53,9 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--project",required=True); ap.add_argument("--out",default="FINAL.mp4")
     ap.add_argument("--range",nargs=2,type=float); ap.add_argument("--tmp",default="")
+    # Write the edit as separate layers as well as the flat file, so it can be reviewed — or
+    # finished — somewhere else. Off by default: it costs a second pass over the graphics.
+    ap.add_argument("--layers",default="",help="directory to write base/graphics/captions/audio layers into")
     a=ap.parse_args()
     P=json.load(open(a.project)); W=os.path.dirname(os.path.abspath(a.project))
     m=P["meta"]; VW,VH,FPS,DUR=m["width"],m["height"],m["fps"],m["duration"]
@@ -536,8 +539,86 @@ def main():
     else:
         shutil.move(cur,a.out)
 
+    # ---------- 4. layers (optional): the same edit, taken apart ----------
+    # A flat file is the deliverable; layers are how a person checks it, or finishes it in
+    # something else. Each is the SAME material the flat render used, so what you review is what
+    # was rendered, not a second interpretation of the project.
+    layers={}
+    if a.layers:
+        LD=a.layers if os.path.isabs(a.layers) else os.path.join(os.path.dirname(os.path.abspath(a.project)),a.layers)
+        os.makedirs(LD,exist_ok=True)
+
+        # the picture with nothing drawn on it: cuts, zooms, framing and the grade
+        picture=os.path.join(LD,"1-picture.mp4")
+        vin_l=vin_for(src)
+        pre=f"[0:v]{LOOK}[v]" if LOOK else "[0:v]null[v]"
+        run(["ffmpeg","-hide_banner","-y",*vin_l,"-filter_complex",pre,"-map","[v]","-an",*HW,
+             "-movflags","+faststart",picture],log=os.path.join(T,"layer_picture.log"))
+        layers["picture"]=os.path.basename(picture)
+
+        # captions, alone, with alpha — the layer people most often want to redo
+        if cues:
+            caps=os.path.join(LD,"3-captions.mov")
+            run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0",
+                 "-i",os.path.join(capdir,"concat.txt"),
+                 "-filter_complex",f"[0:v]fps={FPS},format=rgba,scale={VW}:{VH}[c]",
+                 "-map","[c]","-an","-c:v","qtrle","-pix_fmt","argb","-t",str(span),caps],
+                log=os.path.join(T,"layer_captions.log"))
+            layers["captions"]=os.path.basename(caps)
+
+        # panels and overlays on one transparent layer, each at its own moment
+        gfx_parts=[(s_["_ns"]-A,os.path.join(T,f"clip_{s_['id']}.mov"),float(s_["dur"]))
+                   for s_ in scenes if os.path.exists(os.path.join(T,f"clip_{s_['id']}.mov"))]
+        gfx_parts+=[(o["_ns"]-A,o["_src"],(o["_dur"] or span)) for o in ovs]
+        if gfx_parts:
+            gfile=os.path.join(LD,"2-graphics.mov")
+            args=["ffmpeg","-hide_banner","-y","-f","lavfi","-i",
+                  f"color=c=black@0.0:s={VW}x{VH}:r={FPS}:d={span:.3f},format=rgba"]
+            # each piece starts at its own moment — the same -itsoffset the flat render uses.
+            # Without it a panel is visible at the right time but playing the wrong frames.
+            for st,pth,_d in gfx_parts: args+=["-itsoffset",f"{max(0.0,st):.3f}","-i",pth]
+            fc=[]; prev="[0:v]"
+            for i,(st,_pth,_d) in enumerate(gfx_parts):
+                out=f"[g{i}]"
+                fc.append(f"{prev}[{i+1}:v]overlay=0:0:eof_action=pass:enable=\'between(t,{max(0,st):.3f},{max(0,st)+_d:.3f})\'{out}")
+                prev=out
+            args+=["-filter_complex",";".join(fc),"-map",prev,"-an","-c:v","qtrle","-pix_fmt","argb",
+                   "-t",str(span),gfile]
+            run(args,log=os.path.join(T,"layer_graphics.log"))
+            layers["graphics"]=os.path.basename(gfile)
+
+        # the voice on its own, and every generated layer beside it
+        voice=os.path.join(LD,"4-voice.wav")
+        rc=subprocess.run(["ffmpeg","-hide_banner","-y",*vin_for(src),"-vn","-c:a","pcm_s16le",voice],
+                          capture_output=True,text=True)
+        if rc.returncode==0: layers["voice"]=os.path.basename(voice)
+        stems=[]
+        for kind in ("music","sfx"):
+            for L in (P.get("audio") or {}).get(kind) or []:
+                sp=L.get("src")
+                if not sp: continue
+                full=sp if os.path.isabs(sp) else os.path.join(os.path.dirname(os.path.abspath(a.project)),sp)
+                if not os.path.exists(full): continue
+                dest=os.path.join(LD,f"5-{kind}-{os.path.splitext(os.path.basename(full))[0]}.wav")
+                r2=subprocess.run(["ffmpeg","-hide_banner","-y","-i",full,"-c:a","pcm_s16le",dest],
+                                  capture_output=True,text=True)
+                if r2.returncode==0: stems.append(os.path.basename(dest))
+        if stems: layers["stems"]=stems
+
+        # what they are and how they stack, for whoever opens the folder
+        with open(os.path.join(LD,"README.txt"),"w") as f:
+            f.write("The same edit, taken apart.\n\n"
+                    "  1-picture.mp4    the video: cuts, camera moves, framing and the grade\n"
+                    "  2-graphics.mov   panels and overlays, transparent (QuickTime RLE)\n"
+                    "  3-captions.mov   captions, transparent\n"
+                    "  4-voice.wav      the recorded audio after the cuts\n"
+                    "  5-*.wav          each generated music or effects layer\n\n"
+                    "Stack them in that order — picture at the bottom — and you have the flat render.\n"
+                    "Timings are on the CUT timeline, so they line up as-is.\n")
+
     dur=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",a.out],capture_output=True,text=True).stdout.strip()
     print(json.dumps({"ok":True,"out":a.out,"duration":dur,"captions":len(cues),"scenes":len(scenes),"look":LOOK or None,
-                      "cuts_applied":len(cuts),"range":[A,B] if a.range else None}))
+                      "cuts_applied":len(cuts),"range":[A,B] if a.range else None,
+                      **({"layers":layers} if a.layers else {})}))
 
 if __name__=="__main__": main()

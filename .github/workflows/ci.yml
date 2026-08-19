@@ -66,6 +66,8 @@ jobs:
         run: node scripts/check-pacing.mjs
       - name: Verifier (it catches what a render would silently drop)
         run: node scripts/check-verify.mjs
+      - name: Layers (they come apart and stack back into the same render)
+        run: node scripts/check-layers.mjs
       - name: Publish the result
         if: always()
         uses: actions/upload-artifact@v4

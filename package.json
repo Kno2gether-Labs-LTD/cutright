@@ -26,7 +26,8 @@
     "check:keys": "node scripts/check-keys.mjs",
     "check:framing": "node scripts/check-framing.mjs",
     "check:pacing": "node scripts/check-pacing.mjs",
-    "check:verify": "node scripts/check-verify.mjs"
+    "check:verify": "node scripts/check-verify.mjs",
+    "check:layers": "node scripts/check-layers.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
