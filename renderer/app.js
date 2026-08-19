@@ -1541,12 +1541,21 @@ function renderTranscribePanel() {
 
   // API keys (stored encrypted in the OS keychain by main; never read back here)
   box.appendChild(sep());
-  box.appendChild(sechead('Remote engine keys' + (eng.keys?.keychain ? ' — stored in the OS keychain' : ' — no keychain available')));
+  // null means "not asked yet" — the keychain is only touched when a key is actually stored,
+  // because on macOS even asking can raise a dialog that blocks the app.
+  const kc = eng.keys?.keychain;
+  box.appendChild(sechead('Remote engine keys'
+    + (kc === true ? ' — stored in the OS keychain' : kc === false ? ' — no keychain available' : ' — encrypted with the OS keychain')));
   ['openai', 'elevenlabs'].forEach((provider) => {
     const f = field(`${provider} key ${eng.keys?.[provider] ? '(saved)' : ''}`, '', () => {}, 'password');
     const input = f.querySelector('input');
     const row = document.createElement('div'); row.className = 'btnrow';
     row.append(btn('Save key', async () => {
+      if (!input.value.trim()) return setStatus('Paste the key first', 'error');
+      // Saving encrypts through the OS keychain, and macOS can take its time about authorising
+      // an app whose signature changed since the last key was stored. Say so, rather than
+      // letting the window go quiet for no visible reason.
+      setStatus('Saving to the OS keychain — macOS may ask you to allow it…', 'working');
       const r = await E.transcribe.setKey(provider, input.value);
       input.value = '';
       setStatus(r.ok ? `${provider} key saved` : 'Could not save key', r.ok ? 'ok' : 'error');

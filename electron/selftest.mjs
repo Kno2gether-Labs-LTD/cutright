@@ -918,6 +918,10 @@ export async function runEditTests({ win, settings, app }) {
     expect(r.present === true, 'a stored key was not reported as present');
     expect(r.cleared === false, 'clearing the key did not take effect');
     expect(r.ms < 3000, `listing engines took ${r.ms}ms — something blocked main (a keychain dialog?)`);
+    // The rule itself — that reporting state never touches the keychain — is enforced and proved
+    // in scripts/check-keys.mjs against a safeStorage that counts every access. Here we can only
+    // observe the symptom it prevents: on a build whose signature changed since a key was stored,
+    // that call has been measured at 584 SECONDS with the whole app frozen behind it.
     return r;
   });
 

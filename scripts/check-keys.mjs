@@ -10,9 +10,10 @@
 // that raises if anything decrypts behind the app's back.
 import { makeKeyStore } from '../electron/keys.mjs';
 
-let decrypts = 0;
+let decrypts = 0, probes = 0;
 const safeStorage = {
-  isEncryptionAvailable: () => true,
+  // On macOS this READS the keychain as well — same dialog, same block — so it is counted too.
+  isEncryptionAvailable: () => { probes++; return true; },
   encryptString: (s) => Buffer.from('enc:' + s),
   decryptString: (b) => { decrypts++; return String(b).replace(/^enc:/, ''); },
 };
@@ -29,12 +30,26 @@ if (!settings.keys.openai?.enc) fail('the stored key is not ciphertext');
 if (String(settings.keys.openai.enc).includes('sk-secret')) fail('the key was written in the clear');
 if (saved !== 1) fail('storing a key did not persist the settings');
 
-// the rule
-decrypts = 0;
+// the rule: nothing that only reports state may touch the keychain
+decrypts = 0; probes = 0;
 if (keys.has('openai') !== true) fail('a stored key was not reported as present');
 if (keys.known().openai !== true) fail('known() did not report the stored key');
 if (decrypts !== 0) fail(`asking whether a key exists decrypted it ${decrypts} time(s) — this is the ` +
   'freeze: on macOS that is a blocking keychain dialog behind the window');
+if (probes !== 0) fail(`reporting state called isEncryptionAvailable() ${probes} time(s) — that reads the ` +
+  'keychain too, and blocks main exactly the same way');
+
+// probing is explicit, cached, and survives the keychain being unavailable
+const fresh = makeKeyStore({ safeStorage, getSettings: () => ({ keys: {} }), save: () => {}, env: {} });
+if (fresh.known().keychain !== null) fail('keychain state should be null until something asks');
+probes = 0;
+if (fresh.probe() !== true || fresh.probe() !== true) fail('probe() did not report the keychain');
+if (probes !== 1) fail(`probe() hit the keychain ${probes} times — it must be cached`);
+if (fresh.known().keychain !== true) fail('known() did not pick up the probed state');
+const noKeychain = makeKeyStore({
+  safeStorage: { ...safeStorage, isEncryptionAvailable: () => { throw new Error('no keychain'); } },
+  getSettings: () => ({ keys: {} }), save: () => {}, env: {} });
+if (noKeychain.probe() !== false) fail('a keychain that throws should probe as unavailable, not crash');
 
 // using one may decrypt, and must return the real value
 if (keys.get('openai') !== 'sk-secret') fail('the key did not round-trip');

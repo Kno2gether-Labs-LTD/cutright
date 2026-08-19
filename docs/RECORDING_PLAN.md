@@ -108,3 +108,18 @@ Recording is hardware- and permission-dependent, so the suite must not require a
   cursor sampling, project creation from a fixture recording;
 - engine: a zoom renders and the frame actually changes at the right time (measured, not assumed);
 - proposals: synthetic cursor tracks with known dwells must yield zooms at those timestamps.
+
+### A second macOS note: the keychain can freeze the app for minutes
+
+`safeStorage.isEncryptionAvailable()` and `safeStorage.decryptString()` both READ the keychain,
+synchronously, on the main process. When the app's code signature has changed since a key was
+stored — which is every rebuild of an app that is not Developer ID signed — macOS makes that call
+wait. Measured on a packaged build: **584 seconds**, with the whole app frozen and nothing in the
+log. It is not a dialog anyone can dismiss; the call simply does not return.
+
+So the keychain is touched at exactly two moments, both of them things the user just asked for:
+saving a key and using one. Never to draw a panel, never at startup (a freeze at launch is still
+a freeze). `scripts/check-keys.mjs` enforces this against a safeStorage that counts every access.
+
+Signing the app with a Developer ID certificate makes the identity stable and the problem goes
+away for everyone who installs a release. Until then, the first save after an update may pause.
