@@ -19,6 +19,27 @@ queue. Each entry states what it extends, so none of it is a rewrite.
 9. **`cutright doctor` — lint the edit before you export** — "3 captions land on a cut seam", "scene 4 straddles a cut and will be silently dropped", "peak −0.2 dBTP will clip". Static analysis over `project.json` + `ffprobe`; also the CLI check the agent uses to verify its own work. Six always-right rules, not thirty heuristics. Effort S.
 10. **Signed template packs + the pack store** — the paid layer. The plumbing exists (manifest, picker, user-templates dir that wins on id clash); what's missing is a catalogue, download + Ed25519 verification (`node:crypto`), and a licence field. **Commercial risk, not technical:** Apache-2.0 means anyone can delete the check — sell design work and updates, not DRM. Needs decisions on hosting, payments, an asset EULA that is explicitly *not* Apache-2.0, and **per-pack font licences** (bundling a commercial display font in a sold template is the likeliest legal mistake).
 
+## Known bug — an external edit to project.json can discard an in-app one
+
+`zooms: suggestions from a recording become real zooms when accepted` fails intermittently in
+the full suite (three failures and one pass across four runs; it does not fail under `core`).
+It fails on a clean `main` as well, so it predates the work that found it.
+
+What the evidence says: the accepted zooms never reach disk at all — `project.zooms` is empty
+after the run, so it is not a late write being read early. The suggestion panel renders three
+rows and two are ticked, which means `zoomSuggest.list` is populated and the Add button is
+enabled. `applyZoomSuggestions` mutates `project.zooms` and then calls `save()`.
+
+The likely mechanism is the file watcher. The test writes `project.json` from outside, the app
+reloads and replaces `project` with a fresh object, and if that lands between the mutation and
+the serialise, the edit is written over. Under `core` the app is idle and the reload wins the
+race early; under the full suite it is busy and lands in the middle.
+
+This matters well beyond the test. The whole premise is that an agent edits `project.json`
+while you are looking at it, so an in-app edit racing an external one is the normal case, not a
+contrived one. A fix probably means guarding `save()` on the mtime the project was loaded at,
+and re-applying rather than overwriting when it has moved.
+
 ## Notes carried from the review
 - A creator's real cost centres, in order: finding the bad bits (1, 7), reformatting for every platform (2), waiting for exports (4), and the post-edit publishing chores (8).
 - Everything here reuses `make_remap()` — the single function that keeps captions, scenes, overlays and audio in sync through cuts. Anything that changes timing must go through it.
