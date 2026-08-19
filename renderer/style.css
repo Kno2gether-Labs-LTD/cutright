@@ -22,6 +22,14 @@
 
   /* the editor keeps its own render-domain colours (they match the caption style) */
   --coral: #e5533d;
+
+  /* header — its own surface so the chips have something to sit on */
+  --head-bg: #111110;
+  --chip: #1e1e19;
+  --chip-hi: #2a2a24;
+  --chip-line: #34342d;
+  --chip-line-hi: #4a4a40;
+  --chip-ink: #dedad0;
   --lime: #c4d82e;
   --sky: #6fb7e8;
   --bone: #f1efe7;
@@ -69,19 +77,44 @@ code { font-family: var(--font-mono); color: var(--accent); font-size: 11.5px; }
 /* ---------------------------------------------------------------- header */
 header {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  height: 52px; padding: 0 14px 0 90px;   /* left pad clears the macOS traffic lights */
-  background: var(--panel); border-bottom: 1px solid var(--line);
+  height: 54px; padding: 0 14px 0 90px;   /* left pad clears the macOS traffic lights */
+  background: var(--head-bg); border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
 }
 header button, header .chip, header .status { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .logomark { width: 22px; height: 22px; border-radius: 6px; flex: none; }
 .wordmark { font-family: var(--font-display); font-size: 17px; letter-spacing: .6px; flex: none; text-transform: uppercase; }
+/* Separates the identity from the controls, so the chips read as a group of buttons
+   rather than as more of the wordmark. */
+.brand-sep { width: 1px; height: 20px; background: var(--line); flex: none; margin: 0 4px; }
+
+/* Chips used to be dim text on a background 1.02:1 against the header — no visible surface at
+   all, so they read as floating labels rather than as things you could press. Near-black
+   surfaces cannot separate by fill alone (the contrast formula compresses down there), so the
+   button-ness comes from a border, with the fill only reinforcing it. */
 .chip {
   max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--dim); background: #0e1015; padding: 4px 9px; font-size: 11.5px;
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--chip-ink); background: var(--chip); border: 1px solid var(--chip-line);
+  border-radius: 8px; padding: 5px 11px; font-size: 12px; font-weight: 500;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.chip:hover { color: var(--text); }
+.chip:hover { color: var(--text); background: var(--chip-hi); border-color: var(--chip-line-hi); }
+.chip:active { transform: translateY(0.5px); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The workspace chip names the open project, so it earns the accent — it is the one piece of
+   state in the header rather than an action. */
+#btnWorkspace { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: -.1px; }
+#btnWorkspace::before {
+  content: ''; width: 6px; height: 6px; border-radius: 2px; flex: none;
+  background: var(--accent); opacity: .85;
+}
+/* A real dot rather than a "●" baked into the label, so it can carry the brand red at a size
+   the glyph could not. It does not animate: the main window is minimised while a take runs, so
+   a pulse here would never be on screen. */
+.rec-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--coral); }
+#btnRecord:hover { border-color: color-mix(in oklab, var(--coral) 45%, var(--chip-line-hi)); }
 .actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .status {
   font-size: 11.5px; color: var(--dim); max-width: 320px; overflow: hidden;
@@ -426,6 +459,20 @@ select:focus { outline: none; border-color: #46506a; }
 .recent-item .rp { font-size: 10.5px; color: var(--dim); font-family: var(--font-mono); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; direction: rtl; max-width: 190px; }
 .recent-empty { font-size: 12px; color: var(--dim); line-height: 1.6; }
+/* Provenance on a library row. A recording is badged in the brand red because the app made it;
+   an imported video is stated plainly, because saying so is useful but it is not our work. */
+.recent-item .rmeta { display: flex; align-items: center; gap: 8px; flex: none; }
+.rtag {
+  font-size: 10px; letter-spacing: .3px; text-transform: uppercase; font-weight: 600;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  color: var(--dim); background: var(--chip); border: 1px solid var(--chip-line);
+}
+.rtag-rec {
+  color: color-mix(in oklab, var(--coral) 72%, var(--bone));
+  border-color: color-mix(in oklab, var(--coral) 40%, var(--chip-line));
+  background: color-mix(in oklab, var(--coral) 12%, var(--chip));
+}
+.recent-item .rsub { font-size: 11px; color: var(--dim); white-space: nowrap; flex: none; }
 
 .feat-head { font-family: var(--font-display); font-size: 15px; letter-spacing: 1.4px; text-transform: uppercase;
   color: var(--dim); margin: 34px 0 14px; }

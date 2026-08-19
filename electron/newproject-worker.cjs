@@ -148,6 +148,14 @@ async function create(job) {
   }
 
   const project = JSON.parse(readFileSync(projectPath, 'utf8'));
+  // Provenance, stamped here because both branches above converge on this point: the Python
+  // builder and the empty-project fallback would otherwise need the same lines twice. A
+  // recording overwrites `origin` with 'recording' once the capture details are folded in.
+  project.meta = { ...project.meta,
+    origin: project.meta?.origin || 'import',
+    createdBy: project.meta?.createdBy || `Cutright ${process.env.CVE_APP_VERSION || ''}`.trim(),
+    createdAt: project.meta?.createdAt || new Date().toISOString() };
+  writeFileSync(projectPath, JSON.stringify(project, null, 2));
   progress('build', 'ready', 100);
   return {
     work: dest, project: projectPath,

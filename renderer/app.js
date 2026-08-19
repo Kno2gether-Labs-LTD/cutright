@@ -1036,31 +1036,7 @@ async function showHome() {
   $('#home').hidden = false;
   $('#welcome').hidden = true;
 
-  const box = $('#homeRecent');
-  box.innerHTML = '';
-  const recents = (cfg.recent || []).filter(Boolean);
-  if (!recents.length) {
-    const d = document.createElement('div');
-    d.className = 'recent-empty';
-    d.textContent = 'Nothing yet. Start from a video and it will appear here.';
-    box.appendChild(d);
-  } else {
-    recents.forEach((dir, i) => {
-      const b = document.createElement('button');
-      b.className = 'recent-item';
-      const nm = document.createElement('span'); nm.className = 'rn';
-      nm.textContent = dir.replace(/\/+$/, '').split('/').pop();
-      const pa = document.createElement('span'); pa.className = 'rp'; pa.textContent = dir;
-      b.append(nm, pa);
-      b.title = (i === 0 ? 'Continue editing — ' : '') + dir;
-      b.onclick = async () => {
-        const r = await E.openWorkspace(dir);
-        if (r?.ok) E.reload();
-        else { pa.textContent = r?.error || 'could not open'; b.disabled = true; }
-      };
-      box.appendChild(b);
-    });
-  }
+  renderLibrary(cfg);
 
   $('#homeRecord').onclick = () => E.openRecorder();
   $('#homeNew').onclick = () => { $('#home').hidden = true; homeOpen = false; openNewProject(); };
@@ -2293,3 +2269,75 @@ function fmtMs(t) {
 }
 
 boot();
+
+// The Home list. Main merges what the user has opened with the recordings the app itself made,
+// so a take you have not opened yet is still here rather than only in Finder.
+const clock = (secs) => {
+  const t = Math.max(0, Math.round(secs || 0));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
+const whenText = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+};
+
+async function renderLibrary(cfg) {
+  const box = $('#homeRecent');
+  box.innerHTML = '';
+  // Fall back to the plain recent paths if the library call fails: a Home screen that lists
+  // nothing is a worse failure than one without badges.
+  let items = null;
+  try { items = (await E.listLibrary())?.items || null; } catch { items = null; }
+  if (!items) items = (cfg.recent || []).filter(Boolean).map((dir) => ({ dir, name: dir.split('/').pop() }));
+
+  if (!items.length) {
+    const d = document.createElement('div');
+    d.className = 'recent-empty';
+    d.textContent = 'Nothing yet. Record your screen or start from a video, and it will appear here.';
+    box.appendChild(d);
+    return;
+  }
+
+  items.forEach((it, i) => {
+    const b = document.createElement('button');
+    b.className = 'recent-item';
+    const nm = document.createElement('span'); nm.className = 'rn';
+    nm.textContent = it.name || it.dir.split('/').pop();
+
+    const meta = document.createElement('span'); meta.className = 'rmeta';
+    if (it.origin === 'recording') {
+      const tag = document.createElement('span');
+      tag.className = 'rtag rtag-rec';
+      // The label the user asked for: these folders were made here, not imported.
+      tag.textContent = it.hasCamera ? 'Recorded in Cutright · camera' : 'Recorded in Cutright';
+      meta.appendChild(tag);
+    } else if (it.origin) {
+      const tag = document.createElement('span');
+      tag.className = 'rtag';
+      tag.textContent = 'From a video';
+      meta.appendChild(tag);
+    }
+    const bits = [it.duration ? clock(it.duration) : '', whenText(it.createdAt)].filter(Boolean);
+    if (bits.length) {
+      const sub = document.createElement('span'); sub.className = 'rsub';
+      sub.textContent = bits.join(' · ');
+      meta.appendChild(sub);
+    }
+
+    const pa = document.createElement('span'); pa.className = 'rp'; pa.textContent = it.dir;
+    b.append(nm, meta, pa);
+    b.title = (i === 0 ? 'Continue editing — ' : '') + (it.createdBy ? it.createdBy + ' — ' : '') + it.dir;
+    b.onclick = async () => {
+      const r = await E.openWorkspace(it.dir);
+      if (r?.ok) E.reload();
+      else { pa.textContent = r?.error || 'could not open'; b.disabled = true; }
+    };
+    box.appendChild(b);
+  });
+}

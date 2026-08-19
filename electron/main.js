@@ -15,6 +15,7 @@ import { Readable } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { writeAgentFiles } from './brief.mjs';
 import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
+import { listLibrary } from './library.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -541,7 +542,7 @@ function registerRecordingIpc() {
     const send = (m) => { try { e.sender.send('rec:progress', m); } catch {} };
 
     const child = utilityProcess.fork(join(__dir, 'newproject-worker.cjs'), [], {
-      serviceName: 'cve-recording', stdio: 'pipe', env: { ...process.env },
+      serviceName: 'cve-recording', stdio: 'pipe', env: { ...process.env, CVE_APP_VERSION: app.getVersion() },
     });
     const { port1, port2 } = new MessageChannelMain();
     child.postMessage({ type: 'port' }, [port1]);
@@ -567,6 +568,12 @@ function registerRecordingIpc() {
               cameraHome: { to: 'corner', shape: 'circle', size: 0.24, corner: 'br', margin: 0.045 },
             } };
           }
+          // Provenance, so the library can say where this came from without guessing. The app
+          // made this folder; a year later that is not obvious from the files inside it.
+          project.meta = { ...project.meta,
+            origin: 'recording',
+            createdBy: `Cutright ${app.getVersion()}`,
+            createdAt: new Date(rec.startedAt).toISOString() };
           project.recording = {
             startedAt: new Date(rec.startedAt).toISOString(),
             screen: 'recording/screen.mp4',
@@ -696,7 +703,7 @@ function createProject(webContents, opts = {}) {
   if (!dest) return { error: 'choose where to put the project' };
 
   const child = utilityProcess.fork(join(__dir, 'newproject-worker.cjs'), [], {
-    serviceName: 'cve-newproject', stdio: 'pipe', env: { ...process.env },
+    serviceName: 'cve-newproject', stdio: 'pipe', env: { ...process.env, CVE_APP_VERSION: app.getVersion() },
   });
   const id = 'np' + Date.now();
   const { port1, port2 } = new MessageChannelMain();
@@ -1014,6 +1021,15 @@ function registerIpc() {
     skipHome: (() => { const v = openEditorNext; openEditorNext = false; return v; })(),
     version: app.getVersion(), platform: process.platform, dev: isDev,
   }));
+
+  // What the Home screen lists: projects the user has opened, plus recordings the app made and
+  // put in ~/Movies/Cutright, which would otherwise only be findable in Finder.
+  ipcMain.handle('library:list', () => {
+    try {
+      return { items: listLibrary({ recent: settings.recent || [],
+                                    recordingsDir: defaultRecordingsDir(app) }) };
+    } catch (e) { log('library', e.message); return { items: [], error: e.message }; }
+  });
 
   ipcMain.handle('workspace:choose', async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'],

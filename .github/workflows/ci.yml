@@ -35,6 +35,8 @@ jobs:
         run: node scripts/check-keys.mjs
       - name: MCP wiring (the key never lands in .mcp.json)
         run: node scripts/check-mcp.mjs
+      - name: Library (recordings show up as projects, labelled)
+        run: node scripts/check-library.mjs
       - name: Signing (the app keeps one identity across rebuilds)
         # CI has no certificate, so this exercises the ad-hoc fallback and the
         # requirement parsing; the stability half runs on a machine that has one.

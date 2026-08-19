@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld('editor', {
   // --- project / workspace ---
   config: () => ipcRenderer.invoke('config:get'),
   chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
+  listLibrary: () => ipcRenderer.invoke('library:list'),
   openWorkspace: (dir) => ipcRenderer.invoke('workspace:open', str(dir)),
   reload: () => ipcRenderer.invoke('app:reload'),
   revealFolder: (dir) => ipcRenderer.invoke('shell:revealFolder', str(dir)),
