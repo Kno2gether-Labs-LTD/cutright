@@ -107,7 +107,11 @@ async function create(job) {
     });
 
   // ---- transcript (drives captions, auto-cut and the transcript editor) ----
+  // A silent recording is a legitimate thing to have: a screen capture with no mic, or a
+  // clip whose audio is music. Transcription failing must never cost the user the project.
+  let transcribed = false;
   if (transcribe) {
+    try {
     progress('transcribe', 'listening to the audio (this runs on your machine)', 58);
     const wav = join(dest, '.cve_stt.wav');
     await run('ffmpeg', ['-hide_banner', '-y', '-i', graded, '-vn', '-ac', '1', '-ar', '16000',
@@ -117,14 +121,19 @@ async function create(job) {
     try {
       await run('npx', args, { cwd: dest, onLine: (l) => { if (/%/.test(l)) progress('transcribe', l.trim().slice(0, 90), 70); } });
     } finally { try { unlinkSync(wav); } catch {} }
-    if (!existsSync(join(dest, 'transcript.json'))) throw new Error('transcription produced no transcript.json');
-    progress('transcribe', 'done', 85);
+      if (!existsSync(join(dest, 'transcript.json'))) throw new Error('transcription produced no transcript.json');
+      transcribed = true;
+      progress('transcribe', 'done', 85);
+    } catch (e) {
+      progress('transcribe', 'no speech found — building the project without captions', 85);
+      progress('transcribe', 'continuing without captions: ' + e.message.slice(0, 120), 86);
+    }
   }
 
   // ---- project.json ----
   progress('build', 'writing project.json', 90);
   const projectPath = join(dest, 'project.json');
-  if (transcribe && existsSync(join(dest, 'transcript.json'))) {
+  if (transcribed && existsSync(join(dest, 'transcript.json'))) {
     await run('python3', [join(engineDir, 'build_project.py'), '--work', dest,
       '--source', source, '--out', projectPath]);
   } else {

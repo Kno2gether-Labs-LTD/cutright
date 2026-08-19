@@ -21,7 +21,8 @@
     "sync-engine": "node scripts/sync-engine.mjs",
     "dist:signed": "npm run vendor && bash scripts/dist-signed.sh",
     "signing": "bash scripts/setup-signing.sh",
-    "art": "node scripts/make-dmg-art.mjs"
+    "art": "node scripts/make-dmg-art.mjs",
+    "check:zoom": "node scripts/check-zoom-geometry.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -74,7 +75,12 @@
       "hardenedRuntime": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Cutright records your camera when you choose to include it in a recording.",
+        "NSMicrophoneUsageDescription": "Cutright records your microphone so your narration is captured with the screen.",
+        "NSScreenCaptureUsageDescription": "Cutright records the screen or window you pick so you can edit it into a video."
+      }
     },
     "dmg": {
       "title": "Cutright ${version}",

@@ -1,0 +1,54 @@
+/* Recorder window — setup panel, then a compact always-on-top bar while recording. */
+.rec-body { padding: 0; overflow: hidden; background: var(--ink); }
+.rec-setup { padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 14px; height: 100vh;
+  overflow-y: auto; }
+.rec-head { display: flex; gap: 12px; align-items: center; }
+.rec-logo { width: 34px; height: 34px; border-radius: 9px; }
+.rec-title { font-family: var(--font-display); font-size: 19px; letter-spacing: .6px; text-transform: uppercase; }
+.rec-sub { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+.rec-field label { display: block; font-size: 10.5px; color: var(--dim); text-transform: uppercase;
+  letter-spacing: .6px; margin-bottom: 6px; }
+.rec-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 210px; overflow-y: auto; }
+.rec-src { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer;
+  background: var(--panel); text-align: left; padding: 0; }
+.rec-src:hover { border-color: #39404e; }
+.rec-src.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.rec-src img { width: 100%; height: 74px; object-fit: cover; display: block; background: #000; }
+.rec-src span { display: block; padding: 6px 8px; font-size: 10.5px; color: var(--dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rec-row { display: flex; gap: 10px; align-items: center; }
+.rec-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.rec-toggle input { width: auto; }
+.rec-select { flex: 1; min-width: 0; }
+.rec-campreview { width: 100%; max-height: 130px; object-fit: cover; border-radius: 10px; background: #000; }
+.rec-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 6px; }
+.rec-note { font-size: 10.5px; color: var(--dim); line-height: 1.5; margin: 0; }
+.rec-perm { background: #3a1a16; color: #ffcabd; border: 1px solid #6b2a22; border-radius: 8px;
+  padding: 8px 10px; font-size: 11.5px; line-height: 1.5; }
+
+.rec-count { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--ink); }
+.rec-count span { font-family: var(--font-display); font-size: 120px; color: var(--accent); }
+
+.rec-bar { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 100vh;
+  background: var(--panel); -webkit-app-region: drag; }
+.rec-bar button { -webkit-app-region: no-drag; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5533d; flex: none;
+  animation: rec-pulse 1.6s ease-in-out infinite; }
+.rec-bar.paused .rec-dot { animation: none; background: var(--dim); }
+@keyframes rec-pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+.rec-timer { font-family: var(--font-mono); font-size: 13px; min-width: 52px; }
+.rec-mini { padding: 4px 10px; font-size: 11.5px; }
+.rec-mini.stop { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+
+.rec-finish { padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; height: 100vh;
+  justify-content: center; }
+.rec-progress { height: 6px; background: #23262e; border-radius: 3px; overflow: hidden; }
+.rec-progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+
+/* inline action inside a warning banner */
+.link {
+  background: none; border: 0; padding: 0; margin-left: .35rem;
+  color: var(--amber, #f3b04a); font: inherit; text-decoration: underline; cursor: pointer;
+}
+.link:hover { color: var(--ink, #f5f3ee); }

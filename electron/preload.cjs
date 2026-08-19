@@ -87,6 +87,18 @@ contextBridge.exposeInMainWorld('editor', {
   openWorkspace: (dir) => ipcRenderer.invoke('workspace:open', str(dir)),
   reload: () => ipcRenderer.invoke('app:reload'),
   revealFolder: (dir) => ipcRenderer.invoke('shell:revealFolder', str(dir)),
+  openRecorder: () => ipcRenderer.invoke('rec:open'),
+  rec: {
+    sources: () => ipcRenderer.invoke('rec:sources'),
+    permissions: () => ipcRenderer.invoke('rec:permissions'),
+    start: (o = {}) => ipcRenderer.invoke('rec:start', {
+      name: str(o.name), screenId: str(o.screenId), camera: !!o.camera, mic: !!o.mic }),
+    chunk: (track, buffer) => ipcRenderer.invoke('rec:chunk', { track: str(track), buffer }),
+    pause: () => ipcRenderer.invoke('rec:pause'),
+    resume: () => ipcRenderer.invoke('rec:resume'),
+    mark: (type) => ipcRenderer.invoke('rec:mark', str(type)),
+    stop: () => ipcRenderer.invoke('rec:stop'),
+  },
   newProject: {
     pickVideo: () => ipcRenderer.invoke('project:pickVideo'),
     pickFolder: (o = {}) => ipcRenderer.invoke('project:pickFolder', { defaultPath: str(o.defaultPath), title: str(o.title) }),

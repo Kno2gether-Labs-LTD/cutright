@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src blob: mediastream:; font-src 'self' data:; connect-src 'self'; base-uri 'none'">
+<title>Record — Cutright</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="recorder.css">
+</head>
+<body class="rec-body">
+
+<!-- setup -->
+<div id="setup" class="rec-setup">
+  <div class="rec-head">
+    <img src="logo.png" alt="" class="rec-logo">
+    <div>
+      <div class="rec-title">Record</div>
+      <div class="rec-sub">Screen, camera and voice — it becomes a project when you stop</div>
+    </div>
+  </div>
+
+  <div id="permWarn" class="rec-perm" hidden></div>
+
+  <div class="rec-field">
+    <label>What to record</label>
+    <div id="sourceList" class="rec-sources"></div>
+  </div>
+
+  <div class="rec-row">
+    <label class="rec-toggle"><input type="checkbox" id="useMic" checked><span>Microphone</span></label>
+    <label class="rec-toggle"><input type="checkbox" id="useCam"><span>Camera</span></label>
+  </div>
+  <div class="rec-row">
+    <select id="micDevice" class="rec-select"></select>
+    <select id="camDevice" class="rec-select" disabled></select>
+  </div>
+
+  <video id="camPreview" class="rec-campreview" autoplay muted playsinline hidden></video>
+
+  <div class="rec-field">
+    <label>Name</label>
+    <input id="recName" type="text" placeholder="Tutorial — self-hosting the relay">
+  </div>
+
+  <div class="rec-actions">
+    <button id="btnCancel">Cancel</button>
+    <span class="spacer"></span>
+    <button id="btnStart" class="primary">Start recording</button>
+  </div>
+  <p class="rec-note" id="recNote">Nothing is uploaded. The recording is written straight to your
+    Movies folder and transcribed on this machine.</p>
+</div>
+
+<!-- countdown -->
+<div id="countdown" class="rec-count" hidden><span id="countNum">3</span></div>
+
+<!-- recording bar -->
+<div id="bar" class="rec-bar" hidden>
+  <span class="rec-dot"></span>
+  <span id="timer" class="rec-timer">0:00</span>
+  <button id="btnMark" class="rec-mini" title="Mark this moment (M)">Mark</button>
+  <button id="btnPause" class="rec-mini">Pause</button>
+  <button id="btnStop" class="rec-mini stop">Stop</button>
+</div>
+
+<!-- finishing -->
+<div id="finish" class="rec-finish" hidden>
+  <div class="rec-title" id="finTitle">Building your project…</div>
+  <div class="rec-progress"><div id="finBar"></div></div>
+  <div id="finStage" class="rec-sub">Starting…</div>
+  <div class="rec-actions" id="finActions" hidden>
+    <button id="btnOpenProject" class="primary">Open the project</button>
+  </div>
+</div>
+
+<script src="recorder.js"></script>
+</body>
+</html>

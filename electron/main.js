@@ -5,12 +5,13 @@
 //
 // Security posture (do not loosen): contextIsolation:true, sandbox:true,
 // nodeIntegration:false, a narrow contextBridge (see preload.cjs) and a strict CSP.
-import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage, desktopCapturer, systemPreferences, screen } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { writeAgentFiles } from './brief.mjs';
+import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -370,6 +371,199 @@ async function checkEnvironment() {
   else if (!pillow) missing.push({ tool: 'Pillow (python)', hint: `${tools.python} -m pip install --user Pillow` });
   if (!engineOk) missing.push({ tool: 'render engine', hint: 'install the video-edit skill at ' + settings.engine });
   return { ok: missing.length === 0, tools, pillow, engine: settings.engine, engineOk, missing };
+}
+
+// ---------------------------------------------------------------- recording
+let recWin = null, session = null;
+
+function openRecorder() {
+  if (recWin && !recWin.isDestroyed()) { recWin.show(); recWin.focus(); return recWin; }
+  recWin = new BrowserWindow({
+    width: 460, height: 640, resizable: false, fullscreenable: false,
+    title: 'Record', backgroundColor: '#0a0a09', show: false,
+    webPreferences: {
+      preload: join(__dir, 'recorder-preload.cjs'),
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
+      backgroundThrottling: false,        // a throttled renderer drops recorded frames
+    },
+  });
+  recWin.once('ready-to-show', () => recWin.show());
+  // the recorder is a second window: give it the same diagnostics as the main one
+  // Electron 4x passes a single event object; older builds passed positional args. Accept both,
+  // or the window's errors are invisible.
+  recWin.webContents.on('console-message', (a, level, message) => {
+    const lvl = typeof a === 'object' && a?.level !== undefined ? a.level : level;
+    const msg = typeof a === 'object' && a?.message !== undefined ? a.message : message;
+    if (lvl === 'error' || lvl === 'warning' || lvl >= 2) log('recorder-console', `[${lvl}] ${msg}`);
+  });
+  recWin.webContents.on('did-fail-load', (_e, code, desc) => log('recorder did-fail-load', code, desc));
+  recWin.webContents.on('render-process-gone', (_e, d) => log('recorder gone', JSON.stringify(d)));
+  recWin.loadFile(join(ROOT, 'renderer/recorder.html'));
+  recWin.on('closed', () => { recWin = null; });
+  return recWin;
+}
+
+// While recording the window becomes a small always-on-top bar so it is out of the shot.
+function setRecorderCompact(on) {
+  if (!recWin || recWin.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay().workArea;
+  if (on) {
+    recWin.setAlwaysOnTop(true, 'screen-saver');
+    recWin.setResizable(false);
+    recWin.setSize(300, 52);
+    recWin.setPosition(Math.round(display.x + display.width / 2 - 150), display.y + display.height - 96);
+    win?.minimize();
+  } else {
+    recWin.setAlwaysOnTop(false);
+    recWin.setSize(460, 640);
+    recWin.center();
+    win?.restore();
+  }
+}
+
+function registerRecordingIpc() {
+  ipcMain.handle('rec:sources', async () => {
+    const srcs = await desktopCapturer.getSources({
+      types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: false });
+    const list = srcs
+      .filter((s) => !/^Cutright$|^Record —/.test(s.name))       // do not offer our own windows
+      .map((s) => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'),
+                     thumbnail: s.thumbnail.toDataURL() }));
+    // Every Mac has at least one display. If none come back, macOS is refusing to hand them
+    // over — the permission is denied no matter what getMediaAccessStatus claims.
+    const denied = process.platform === 'darwin' && !list.some((s) => s.screen);
+    return { sources: list, screenCaptureDenied: denied };
+  });
+
+  ipcMain.handle('rec:permissions', () => ({
+    screen: systemPreferences.getMediaAccessStatus('screen'),
+    microphone: systemPreferences.getMediaAccessStatus('microphone'),
+    camera: systemPreferences.getMediaAccessStatus('camera'),
+  }));
+  ipcMain.handle('rec:request', async (_e, kind) => {
+    try { return { ok: await systemPreferences.askForMediaAccess(kind) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('rec:start', (_e, opts) => {
+    try {
+      const base = settings.recordingsDir || defaultRecordingsDir(app);
+      mkdirSync(base, { recursive: true });
+      const dir = newRecordingFolder(base, opts.name);
+      session = new RecordingSession({
+        dir, displays: screen.getAllDisplays(),
+        screenPoint: () => screen.getCursorScreenPoint(), log,
+      });
+      session.open('screen');
+      if (opts.camera) session.open('camera');
+      session.startCursor(60);
+      log('recording started →', dir);
+      return { ok: true, dir };
+    } catch (e) { log('rec:start failed', e.message); return { error: e.message }; }
+  });
+
+  ipcMain.handle('rec:chunk', (_e, { track, buffer }) => {
+    if (!session) return { error: 'no recording in progress' };
+    return { bytes: session.write(track === 'camera' ? 'camera' : 'screen', buffer) };
+  });
+  ipcMain.handle('rec:pause', () => { session?.pause(); return { ok: true }; });
+  ipcMain.handle('rec:resume', () => { session?.resume(); return { ok: true }; });
+  ipcMain.handle('rec:mark', (_e, type) => { session?.mark(type || 'mark'); return { ok: true }; });
+  ipcMain.handle('rec:compact', (_e, on) => { setRecorderCompact(on); return { ok: true }; });
+  ipcMain.handle('rec:close', () => {
+    if (recWin && !recWin.isDestroyed()) recWin.close();
+    win?.restore(); win?.focus();
+    return { ok: true };
+  });
+
+  ipcMain.handle('rec:stop', async () => {
+    if (!session) return { error: 'no recording in progress' };
+    const summary = await session.finish();
+    log('recording finished', JSON.stringify({ dir: summary.dir, duration: summary.duration, samples: summary.samples }));
+    return summary;
+  });
+
+  ipcMain.handle('rec:discard', () => { session = null; return { ok: true }; });
+
+  // The recording becomes a project: same pipeline as "Start from a video", plus the
+  // provenance and the zoom suggestions derived from the cursor track.
+  ipcMain.handle('rec:finalize', async (e, opts = {}) => {
+    if (!session) return { error: 'nothing to finalise' };
+    const rec = session;
+    const source = rec.file('screen');
+    // A capture the OS silently refused leaves a zero-byte file. Say so plainly rather than
+    // failing later inside ffprobe with something the user cannot act on.
+    const bytes = (() => { try { return statSync(source).size; } catch { return 0; } })();
+    if (bytes < 8192) {
+      session = null;
+      return { error: 'macOS did not let Cutright capture the screen, so nothing was recorded. '
+                    + 'Open System Settings → Privacy & Security → Screen Recording, switch Cutright on '
+                    + '(if it is already on, switch it off and on again), then quit and reopen the app.' };
+    }
+    const send = (m) => { try { e.sender.send('rec:progress', m); } catch {} };
+
+    const child = utilityProcess.fork(join(__dir, 'newproject-worker.cjs'), [], {
+      serviceName: 'cve-recording', stdio: 'pipe', env: { ...process.env },
+    });
+    const { port1, port2 } = new MessageChannelMain();
+    child.postMessage({ type: 'port' }, [port1]);
+    port2.on('message', async (ev) => {
+      const m = ev.data;
+      if (m.type === 'progress') return send(m);
+      if (m.type === 'error') { send(m); session = null; return; }
+      if (m.type === 'done') {
+        try {
+          const pPath = join(rec.dir, 'project.json');
+          const project = JSON.parse(readFileSync(pPath, 'utf8'));
+          const cursor = JSON.parse(readFileSync(join(rec.dir, 'recording', 'cursor.json'), 'utf8'));
+          let words = [];
+          try { words = JSON.parse(readFileSync(join(rec.dir, 'transcript.json'), 'utf8')); } catch {}
+
+          project.recording = {
+            startedAt: new Date(rec.startedAt).toISOString(),
+            screen: 'recording/screen.mp4',
+            camera: existsSync(rec.file('camera')) ? 'recording/camera.mp4' : null,
+            cursor: 'recording/cursor.json',
+            duration: rec.elapsed,
+            display: cursor.display || null,
+            marks: (cursor.events || []).map((x) => x.t),
+          };
+          // Suggestions, not edits: the user (or the agent) decides which land.
+          project.recording.zoomSuggestions = proposeZooms({
+            samples: cursor.samples || [], events: cursor.events || [],
+            duration: project.meta?.duration || rec.elapsed, words,
+          });
+          writeFileSync(pPath, JSON.stringify(project, null, 2));
+          setWorkspace(rec.dir);
+          refreshAgentBrief();
+          send({ type: 'done', ...m, dir: rec.dir,
+                 zoomSuggestions: project.recording.zoomSuggestions.length });
+          win?.webContents.reload();
+        } catch (err) { send({ type: 'error', error: err.message }); }
+        session = null;
+      }
+    });
+    port2.start();
+
+    child.postMessage({ type: 'create', job: {
+      source, dest: rec.dir, engineDir: settings.engine,
+      transcribe: opts.transcribe !== false, model: opts.model || 'small.en',
+      language: '', gradeRef: '', targetHeight: 1080, targetFps: 30,
+    } });
+    return { ok: true, dir: rec.dir };
+  });
+
+  ipcMain.handle('rec:privacy', () => {
+    // Deep-links straight to Privacy & Security → Screen Recording.
+    if (process.platform === 'darwin') {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    } else if (process.platform === 'win32') {
+      shell.openExternal('ms-settings:privacy-broadfilesystemaccess');
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('rec:open', () => { openRecorder(); return { ok: true }; });
 }
 
 // ---------------------------------------------------------------- new project
@@ -887,6 +1081,7 @@ app.whenReady().then(async () => {
   refreshAgentBrief();
   registerMediaProtocol();
   registerIpc();
+  registerRecordingIpc();
   Menu.setApplicationMenu(buildMenu());
   createWindow();
   watchProject();
@@ -898,7 +1093,8 @@ app.whenReady().then(async () => {
     const argOut = process.argv.find((a) => a.startsWith('--cve-out='));
     if (argOut) process.env.CVE_SMOKE_OUT = argOut.split('=')[1];
   }
-  if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l) });
+  if (process.env.CVE_E2E) (await import(process.env.CVE_E2E)).run({ win, app, settings, logToApp: (l) => log(l) });
+  else if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l) });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
@@ -910,6 +1106,7 @@ function buildMenu() {
   return Menu.buildFromTemplate([
     ...(mac ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [
+      { label: 'New Recording…', accelerator: 'CmdOrCtrl+Shift+R', click: () => openRecorder() },
       { label: 'Open Workspace…', accelerator: 'CmdOrCtrl+O', click: async () => {
         const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'],
           defaultPath: settings.work || defaultBrowseDir() });
