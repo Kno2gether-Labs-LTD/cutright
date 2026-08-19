@@ -241,6 +241,17 @@ function renderTimeline() {
     label: `−${(c.end - c.start).toFixed(1)}s`, title: `cut ${fmt(c.start)} → ${fmt(c.end)} (removed on export)`,
   })), 'cut');
 
+  // framing — where the picture goes and what shape it takes
+  const FRAME_LABEL = (f) => f.to === 'full' ? 'full frame'
+    : f.to === 'side' ? `side ${f.side || 'right'}`
+    : `${f.shape || 'circle'} ${(f.corner || 'br').toUpperCase()}`;
+  fillLane('#laneFrames', (project.frames || []).map((f, i) => ({
+    i, start: f.start, dur: Math.max(0.3, f.dur || 0.8), cls: 'clip frame', minW: 92,
+    label: FRAME_LABEL(f),
+    title: `${FRAME_LABEL(f)} · moves over ${(f.dur || 0.8).toFixed(1)}s from ${fmt(f.start)}`
+         + (f.to === 'full' ? '' : ` · ${Math.round((f.size || 0.26) * 100)}% of the width`),
+  })), 'frame');
+
   // zooms — a push-in is a scale plus a centre, so show both at a glance
   fillLane('#laneZooms', (project.zooms || []).map((z, i) => ({
     i, start: z.start, dur: Math.max(0.2, z.dur || 1), cls: 'clip zoom', minW: 44,
@@ -366,6 +377,7 @@ function elemOf(s) {
   if (s.kind === 'cut') return project.cuts?.[s.index];
   if (s.kind === 'overlay') return project.overlays?.[s.index];
   if (s.kind === 'zoom') return project.zooms?.[s.index];
+  if (s.kind === 'frame') return project.frames?.[s.index];
   return null;
 }
 
@@ -438,6 +450,7 @@ function renderInspector() {
   else if (sel.kind === 'cut') renderCutInspector(box, e);
   else if (sel.kind === 'overlay') renderOverlayInspector(box, e);
   else if (sel.kind === 'zoom') renderZoomInspector(box, e);
+  else if (sel.kind === 'frame') renderFrameInspector(box, e);
   else renderAudioInspector(box, e);
 }
 
@@ -485,6 +498,23 @@ function renderCaptionInspector(box, e) {
 
 function renderSceneInspector(box, e) {
   box.appendChild(field('Headline', e.headline, (v) => { e.headline = v; save(); renderTimeline(); }));
+
+  // How the picture gets into the scene's card. Sliding is the default because cutting straight
+  // to the layout is the thing that always looked cheap.
+  const entry = document.createElement('div'); entry.className = 'btnrow';
+  const cur = e.enter === 'cut' ? 'cut' : 'slide';
+  [['Slides in', 'slide'], ['Cuts in', 'cut']].forEach(([label, v]) => {
+    entry.appendChild(btn(label, () => {
+      if (v === 'slide') delete e.enter; else e.enter = 'cut';
+      save(); renderInspector();
+    }, cur === v ? 'primary' : ''));
+  });
+  box.appendChild(sechead('Entrance'));
+  box.appendChild(entry);
+  box.appendChild(hint(cur === 'slide'
+    ? 'The picture glides into the card on the right over half a second, the panel fades up around '
+      + 'it, and it glides back out when the scene ends.'
+    : 'The picture jumps straight into the card — the original behaviour.'));
   box.appendChild(rowOf([
     field('Type', e.type, (v) => { e.type = v; save(); renderTimeline(); }),
     field('Start', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
@@ -577,6 +607,110 @@ function addZoom() {
   project.zooms.sort((a, b) => a.start - b.start);
   save(); renderTimeline();
   select('zoom', project.zooms.findIndex((z) => z.source === 'manual' && z.start === +(video.currentTime || 0).toFixed(2)));
+}
+
+// A framing move: where the picture goes, what shape it becomes, and what sits behind it.
+// The default is the one people actually want — shrink to a circle in the bottom-right on a
+// branded wash — because the point of the button is not to make you fill in a form.
+function addFrame() {
+  project.frames = project.frames || [];
+  const at = +(video.currentTime || 0).toFixed(2);
+  const goingSmall = !lastFrameStateBefore(at) || lastFrameStateBefore(at).to === 'full';
+  project.frames.push(goingSmall
+    ? { id: 'fr' + Date.now(), start: at, dur: 0.8, to: 'corner', shape: 'circle',
+        size: 0.26, corner: 'br', margin: 0.04, backdrop: 'brand', ease: 'inout' }
+    : { id: 'fr' + Date.now(), start: at, dur: 0.7, to: 'full', ease: 'inout' });
+  project.frames.sort((a, b) => a.start - b.start);
+  save(); renderTimeline();
+  select('frame', project.frames.findIndex((f) => f.start === at));
+}
+
+// What the picture is doing just before a given moment — so "+" offers the opposite.
+function lastFrameStateBefore(t) {
+  return (project.frames || []).filter((f) => f.start < t).slice(-1)[0] || null;
+}
+
+function renderFrameInspector(box, e) {
+  const set = (patch) => { Object.assign(e, patch); save(); renderTimeline(); renderInspector(); };
+
+  const modes = document.createElement('div'); modes.className = 'btnrow';
+  [['Full frame', 'full'], ['To the side', 'side'], ['To a corner', 'corner']].forEach(([label, mode]) => {
+    const b = btn(label, () => set({ to: mode }), e.to === mode ? 'primary' : '');
+    modes.appendChild(b);
+  });
+  box.appendChild(modes);
+  box.appendChild(hint(e.to === 'side'
+    ? 'The picture keeps its shape and moves aside, leaving the other half for a scene or an overlay — '
+      + 'the layout the info-point templates are built around.'
+    : e.to === 'corner'
+    ? 'The picture shrinks into a corner. A circle or a rounded square reads as "the presenter", '
+      + 'so the screen behind can carry the detail.'
+    : 'The picture returns to filling the frame.'));
+
+  box.appendChild(rowOf([
+    field('Starts (s)', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Takes (s)', e.dur ?? 0.8, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+
+  if (e.to !== 'full') {
+    box.appendChild(rowOf([
+      field('Size (% of width)', Math.round((e.size ?? (e.to === 'side' ? 0.42 : 0.26)) * 100),
+        (v) => { e.size = clamp(+v, 8, 90) / 100; save(); renderTimeline(); }, 'number'),
+      field('Margin (%)', Math.round((e.margin ?? 0.04) * 100),
+        (v) => { e.margin = clamp(+v, 0, 25) / 100; save(); renderTimeline(); }, 'number'),
+    ]));
+
+    const shapes = document.createElement('div'); shapes.className = 'btnrow';
+    const shape = e.shape || (e.to === 'corner' ? 'circle' : 'rounded');
+    [['Circle', 'circle'], ['Rounded', 'rounded'], ['Square', 'rect']].forEach(([label, v]) => {
+      shapes.appendChild(btn(label, () => set({ shape: v }), shape === v ? 'primary' : ''));
+    });
+    box.appendChild(sechead('Shape'));
+    box.appendChild(shapes);
+
+    if (e.to === 'corner') {
+      box.appendChild(sechead('Corner'));
+      const grid = document.createElement('div'); grid.className = 'corner-grid';
+      [['tl', '◤'], ['tr', '◥'], ['bl', '◣'], ['br', '◢']].forEach(([c, glyph]) => {
+        const b = document.createElement('button');
+        b.className = 'corner-cell' + ((e.corner || 'br') === c ? ' on' : '');
+        b.textContent = glyph; b.title = c.toUpperCase();
+        b.onclick = () => set({ corner: c });
+        grid.appendChild(b);
+      });
+      box.appendChild(grid);
+    } else {
+      const sides = document.createElement('div'); sides.className = 'btnrow';
+      [['Left', 'left'], ['Right', 'right']].forEach(([label, v]) => {
+        sides.appendChild(btn(label, () => set({ side: v }), (e.side || 'right') === v ? 'primary' : ''));
+      });
+      box.appendChild(sechead('Which side'));
+      box.appendChild(sides);
+    }
+
+    box.appendChild(sechead('Behind the picture'));
+    const backs = document.createElement('div'); backs.className = 'btnrow';
+    [['Brand wash', 'brand'], ['Blurred frame', 'blur'], ['Flat black', '#0a0a09']].forEach(([label, v]) => {
+      backs.appendChild(btn(label, () => set({ backdrop: v }), (e.backdrop || 'brand') === v ? 'primary' : ''));
+    });
+    box.appendChild(backs);
+  }
+
+  box.appendChild(btnRow(
+    btn('Preview this move', () => {
+      video.currentTime = clamp(e.start - 0.7, 0, dur);
+      video.play().catch(() => {});
+      setTimeout(() => video.pause(), ((e.dur || 0.8) + 1.6) * 1000);
+    }),
+    btn('Add the move back to full', () => {
+      project.frames.push({ id: 'fr' + Date.now(), start: +(e.start + (e.dur || 0.8) + 4).toFixed(2),
+                            dur: 0.7, to: 'full', ease: 'inout' });
+      project.frames.sort((a, b) => a.start - b.start);
+      save(); renderTimeline(); renderInspector();
+    }),
+  ));
+  box.appendChild(hint('The player shows the original video — framing is applied on export, like the '
+    + 'grade and the zooms. Preview a range to see it.'));
 }
 
 function renderZoomInspector(box, e) {
@@ -725,6 +859,7 @@ function remove() {
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
   else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
   else if (sel.kind === 'zoom') project.zooms.splice(sel.index, 1);
+  else if (sel.kind === 'frame') project.frames.splice(sel.index, 1);
   else project.audio[sel.kind].splice(sel.index, 1);
   sel = null; save(); renderTimeline(); renderInspector();
 }
@@ -750,6 +885,7 @@ document.addEventListener('click', (ev) => {
     if (k === 'overlay') return addOverlay();
     if (k === 'cut') return addCut();
     if (k === 'zoom') return addZoom();
+    if (k === 'frame') return addFrame();
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({

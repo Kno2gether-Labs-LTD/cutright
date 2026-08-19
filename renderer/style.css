@@ -120,7 +120,7 @@ video { max-width: 100%; max-height: 100%; outline: none; }
 
 /* ---------------------------------------------------------------- timeline */
 .timeline-panel {
-  height: 302px; min-height: 132px; flex: none; display: flex; flex-direction: column;
+  height: 336px; min-height: 132px; flex: none; display: flex; flex-direction: column;
   background: var(--panel); border-top: 1px solid var(--line);
 }
 .tl-toolbar {
@@ -498,3 +498,22 @@ select:focus { outline: none; border-color: #46506a; }
   pointer-events: none;
 }
 .rsn.click { color: #f3b04a; } .rsn.dwell { color: #7fd1b9; } .rsn.transcript { color: #a86cf7; }
+
+/* framing: the picture moving around the frame — teal, distinct from cuts and zooms */
+.clip.frame {
+  background: linear-gradient(180deg, rgba(111,209,185,.28), rgba(111,209,185,.14));
+  border: 1px solid rgba(111,209,185,.55); color: #dff5ee;
+}
+.clip.frame.selected { border-color: #6fd1b9; box-shadow: 0 0 0 1px #6fd1b9 inset; }
+
+/* pick a corner the way you'd point at one */
+.corner-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 96px; margin: .35rem 0;
+}
+.corner-cell {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1; padding: 0; color: var(--dim);
+  background: #22262f; border: 1px solid #2d323d; border-radius: 6px; cursor: pointer;
+}
+.corner-cell:hover { color: var(--ink, #f5f3ee); }
+.corner-cell.on { color: #0a0a09; background: #6fd1b9; border-color: #6fd1b9; }

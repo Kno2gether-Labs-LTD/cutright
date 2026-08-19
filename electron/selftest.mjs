@@ -1193,6 +1193,88 @@ export async function runEditTests({ win, settings, app }) {
     return { hasCapability: true, inDoc: /zoomSuggestions/.test(md) };
   });
 
+
+  // ---------------------------------------------------------------- framing
+  await test('framing: + adds a move to the corner and the inspector drives it', async () => {
+    const before = (disk().frames || []).length;
+    await js(`(() => { document.querySelector('#video').currentTime = ${at(0.3)};
+      document.querySelector('[data-add="frame"]').click(); })()`);
+    await settle();
+    const added = disk().frames || [];
+    expect(added.length === before + 1, `+ did not add a framing move (${before} → ${added.length})`);
+    const f = added[added.length - 1];
+    // the default has to be the thing people actually want, not an empty form
+    expect(f.to === 'corner' && f.shape === 'circle' && f.corner === 'br',
+      'the default move is not "shrink to a circle in the bottom-right": ' + JSON.stringify(f));
+
+    // drive it through the real controls: side, then left, then a blurred backdrop
+    const clicked = await js(`(() => {
+      const hit = (label) => { const b = [...document.querySelectorAll('#inspector button')]
+        .find(x => x.textContent === label); if (b) { b.click(); return true; } return false; };
+      return { side: hit('To the side') };
+    })()`);
+    expect(clicked.side, 'the inspector offers no "To the side" control');
+    await settle();
+    expect((disk().frames || []).slice(-1)[0].to === 'side', 'switching to the side did not persist');
+
+    await js(`(() => { const b = [...document.querySelectorAll('#inspector button')]
+      .find(x => x.textContent === 'Left'); b && b.click(); })()`);
+    await settle();
+    expect((disk().frames || []).slice(-1)[0].side === 'left', 'choosing the left side did not persist');
+
+    await js(`(() => { const b = [...document.querySelectorAll('#inspector button')]
+      .find(x => x.textContent === 'Blurred frame'); b && b.click(); })()`);
+    await settle();
+    expect((disk().frames || []).slice(-1)[0].backdrop === 'blur', 'choosing a backdrop did not persist');
+
+    // and it must come off the timeline again
+    await js(`document.querySelector('#laneFrames .clip.frame').click()`);
+    await wait(200);
+    await js(`[...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Delete')?.click()`);
+    await settle();
+    expect((disk().frames || []).length === before, 'deleting the framing move did not remove it');
+    return { defaulted: f.to + '/' + f.shape + '/' + f.corner };
+  });
+
+  await test('framing: the corner picker sets the corner it points at', async () => {
+    await js(`(() => { document.querySelector('#video').currentTime = ${at(0.2)};
+      document.querySelector('[data-add="frame"]').click(); })()`);
+    await settle();
+    const picked = await js(`(() => {
+      const cells = [...document.querySelectorAll('.corner-cell')];
+      if (cells.length !== 4) return null;
+      cells[0].click();                                  // top-left
+      return cells.map(c => c.title);
+    })()`);
+    expect(picked && picked.join(',') === 'TL,TR,BL,BR', 'the corner picker is not a 2x2 of corners: ' + picked);
+    await settle();
+    expect((disk().frames || []).slice(-1)[0].corner === 'tl', 'the corner picker did not set the corner');
+
+    await js(`document.querySelector('#laneFrames .clip.frame').click()`);
+    await wait(200);
+    await js(`[...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Delete')?.click()`);
+    await settle();
+    return { corners: picked };
+  });
+
+  await test('framing: seven lanes, still aligned and nothing clipped', async () => {
+    const r = await js(`(() => {
+      const panel = document.querySelector('.timeline-panel').getBoundingClientRect();
+      const lanes = [...document.querySelectorAll('.lane')].map((l) => {
+        const b = l.getBoundingClientRect();
+        return { id: l.id, top: Math.round(b.top), clipped: b.bottom > panel.bottom + 0.5 };
+      });
+      const heads = [...document.querySelectorAll('.thead:not(.ruler-head)')]
+        .map((h) => Math.round(h.getBoundingClientRect().top));
+      return { ids: lanes.map((l) => l.id), clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
+               misaligned: lanes.filter((l, i) => Math.abs(l.top - heads[i]) > 2).map((l) => l.id) };
+    })()`);
+    expect(r.ids.includes('laneFrames'), 'there is no Framing lane');
+    expect(!r.clipped.length, 'lanes fall outside the timeline panel: ' + r.clipped.join(', '));
+    expect(!r.misaligned.length, 'lanes do not line up with their headers: ' + r.misaligned.join(', '));
+    return r;
+  });
+
   // ---------------------------------------------------------------- security
   await test('security: cve:// refuses a path outside the workspace', async () => {
     const r = await js(`(async () => {
@@ -1220,8 +1302,13 @@ export async function runEditTests({ win, settings, app }) {
     // returned ok, never that the UI ended up showing the other project.
     const { mkdtempSync, rmSync, cpSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
+    // Copy the path NOW. `settings` is main's live object: opening another project rewrites
+    // settings.work, so restoring "to settings.work" would restore to the temp project and the
+    // assertion would compare it with itself and pass — leaving every later phase pointed at a
+    // directory this test then deletes. That is exactly what it did.
+    const home = String(settings.work);
     const other = join(mkdtempSync(join(tmpdir(), 'cve-switch-')), 'other_project');
-    cpSync(settings.work, other, { recursive: true });
+    cpSync(home, other, { recursive: true });
     // make it unmistakably different
     const op = JSON.parse(readFileSync(join(other, 'project.json'), 'utf8'));
     op.meta.title = 'THE OTHER PROJECT';
@@ -1257,22 +1344,21 @@ export async function runEditTests({ win, settings, app }) {
     // Put the original project back and PROVE it: leaving the app pointed at a temp
     // folder would poison everything that runs afterwards.
     let back = null;
-    for (let attempt = 0; attempt < 3 && back?.work !== settings.work; attempt++) {
-      await js(`(async () => { const r = await window.editor.openWorkspace(${JSON.stringify(settings.work)});
+    for (let attempt = 0; attempt < 3 && back?.work !== home; attempt++) {
+      await js(`(async () => { const r = await window.editor.openWorkspace(${JSON.stringify(home)});
         if (r?.ok) await window.editor.reload(); })()`).catch(() => {});
       for (let i = 0; i < 40; i++) {
         await wait(500);
         try {
           back = await js(`(async () => ({ work: (await window.editor.config()).work,
             ready: !!window.__cve.project }))()`);
-          if (back?.ready && back.work === settings.work) break;
+          if (back?.ready && back.work === home) break;
         } catch { /* mid-reload */ }
       }
     }
-    expect(back?.work === settings.work,
-      `could not switch back to ${settings.work} (still on ${back?.work})`);
+    expect(back?.work === home, `could not switch back to ${home} (still on ${back?.work})`);
     try { rmSync(dirname(other), { recursive: true, force: true }); } catch {}
-    return { from: before.work, to: other, scenesAfter: after?.scenes, restored: back.work };
+    return { from: home, to: other, scenesAfter: after?.scenes, restored: back.work };
   });
 
 

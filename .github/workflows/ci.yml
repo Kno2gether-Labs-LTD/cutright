@@ -60,6 +60,8 @@ jobs:
             ./node_modules/.bin/electron . --user-data-dir=/tmp/ci-profile
       - name: Zoom geometry (the engine points the camera where the project says)
         run: node scripts/check-zoom-geometry.mjs
+      - name: Framing geometry (the picture moves and changes shape as written)
+        run: node scripts/check-framing.mjs
       - name: Publish the result
         if: always()
         uses: actions/upload-artifact@v4

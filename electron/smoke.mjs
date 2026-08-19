@@ -6,7 +6,7 @@
 //
 // Writes <out>.json (assertions) + <out>.png (screenshot) and exits with code 0/1.
 import { writeFileSync, mkdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // strip ANSI/OSC so we can assert on terminal text
@@ -130,6 +130,16 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
         tags: process.env.CVE_TEST_TAGS || 'all',
         failures: r.results.filter((x) => !x.pass).map((x) => `${x.name}: ${x.error}`) });
       report.editResults = r.results;
+
+      // The suite's last test switches to a throwaway project and switches back, and switching
+      // reloads the window. Later phases read the workspace, so wait until it is really back —
+      // otherwise a render phase runs against a directory that has just been deleted.
+      for (let i = 0; i < 40; i++) {
+        const live = await win.webContents.executeJavaScript(
+          `window.editor.config().then(c => c.work)`, true).catch(() => null);
+        if (live === settings.work && existsSync(join(settings.work, 'project.json'))) break;
+        await wait(250);
+      }
     }
 
     if (want.includes('export')) {

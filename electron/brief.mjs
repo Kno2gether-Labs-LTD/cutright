@@ -58,8 +58,42 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
 
     capabilities: {
       scenes: (t.scenes || []).map((type) => ({ type, use: SCENE_HELP[type] || '' })),
+      sceneEntrance: {
+        note: 'A scene leaves a portrait card empty on the right and the picture slides into it over '
+            + 'about half a second, with the panel fading up around it, then slides back out at the '
+            + 'end. That is the default and needs nothing from you.',
+        optOut: 'set "enter": "cut" on a scene to jump straight into the layout instead',
+        pairsWith: 'capabilities.framing — the same machinery, if you want the picture moved without '
+                 + 'a scene attached',
+      },
       overlays,
       transitions: ['crossfade', 'dip', 'dipwhite', 'whip', 'wiperight', 'circle', 'smooth', 'pixel'],
+
+      // Where the picture sits in the frame, and what shape it is. This is what turns a
+      // talking head into a presenter beside their own slide.
+      framing: {
+        shape: { start: '<seconds on the original timeline>', dur: '<how long the move takes, ~0.8s>',
+                 to: 'full | side | corner',
+                 shape: 'circle | rounded | rect (ignored when to=full)',
+                 size: 'fraction of the frame WIDTH — 0.42 is a good side, 0.26 a good corner',
+                 corner: 'tl | tr | bl | br (when to=corner)',
+                 side: 'left | right (when to=side)',
+                 margin: 'fraction of the width away from the edges, 0.04 by default',
+                 backdrop: 'brand | blur | #rrggbb — what fills the space the picture left',
+                 ease: 'inout | in | out | linear' },
+        example: [
+          { id: 'fr1', start: 18.0, dur: 0.8, to: 'side', side: 'right', size: 0.42,
+            shape: 'rounded', backdrop: 'brand' },
+          { id: 'fr2', start: 26.5, dur: 0.7, to: 'full' },
+        ],
+        howToUseIt: 'Move the speaker aside and the freed half is yours: put a scene or a rendered '
+                  + 'overlay there for as long as the picture stays put, then bring it back to full '
+                  + 'for the next beat. A corner circle is for when the screen recording matters more '
+                  + 'than the face. Each entry is a MOVE, and the picture holds that state until the '
+                  + 'next entry — so always write the one that returns it to full.',
+        cost: 'the shape is drawn frame by frame during a move, so keep moves short (0.6–1.0s) and '
+            + 'do not stack them closer than about two seconds',
+      },
 
       // Camera moves. A push-in is data like everything else: no re-encode decision to make,
       // no plugin to call — add an entry and the engine animates it on export.
@@ -114,6 +148,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
         'write the scene structure at the strongest beats',
         'render and place motion graphics on the exact words that deserve them',
         'add camera moves — push in on what matters, especially where the recording suggests it',
+        'move the picture aside when a graphic deserves the frame, and bring it back afterwards',
         'set the final grade and audio polish',
       ],
       humanDecides: 'the final export, and anything that changes what the video says',
@@ -124,6 +159,8 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       'All timings are on the ORIGINAL timeline (the graded master). The engine re-times everything for cuts.',
       'A scene or overlay that straddles a cut is dropped at render time — place them clear of cuts.',
       'Zoom centres are normalised 0..1, never pixels, so the edit survives a change of resolution.',
+      'Framing sizes and margins are fractions of the frame WIDTH, for the same reason.',
+      'A framing move HOLDS until the next one. Write the move back to full, or it never comes back.',
       'Preview a range before exporting: a full export of a long video takes minutes.',
       'The user may be editing at the same time. Re-read project.json before writing, and keep your changes additive.',
     ],
@@ -187,14 +224,20 @@ the same way. Match the template's tokens (${Object.entries(t.tokens || {}).filt
    product terms. Set the emphasis word (\`e: true\`) where the line lands.
 4. **Structure.** Write \`scenes[]\` at the strongest beats — one per idea, 4–6 seconds,
    clear of any cut. Use the scene types above. Short headlines; the transcript has the detail.
+   The picture slides into the scene's card by itself, so leave half a second of breathing room
+   before the beat you are illustrating.
 5. **Motion graphics.** Where a moment deserves emphasis, render a preset and place it in
    \`overlays[]\` on the exact word (find the timing in \`transcript.json\`).
-6. **Camera.** Add push-ins to \`zooms[]\` where the eye should go — a demo click, a number on
+6. **Framing.** When a beat needs the screen or a graphic more than it needs a face, move the
+   picture with \`frames[]\` — to the side (leaving the other half for a scene or overlay) or into
+   a corner as a circle. Every move needs its partner bringing it back to \`full\`, or the picture
+   stays where you left it for the rest of the video.
+7. **Camera.** Add push-ins to \`zooms[]\` where the eye should go — a demo click, a number on
    screen, the line that lands. 1.25–1.4× for two seconds reads as intent; more reads as panic.
    If this project came from a screen recording, \`recording.zoomSuggestions[]\` already lists
    candidates from clicks, cursor dwell and the words. Copy across the ones that earn it.
-7. **Finish.** Set \`grade.look\` and \`audio.polish\` if the brief asks for a mood.
-8. **Check your work.** Render a range preview over two or three of your changes and confirm
+8. **Finish.** Set \`grade.look\` and \`audio.polish\` if the brief asks for a mood.
+9. **Check your work.** Render a range preview over two or three of your changes and confirm
    they land where you intended. Then tell the user what you changed and what you left alone.
 
 Do not run a full export unless the user asks — that is their call.
@@ -214,6 +257,9 @@ Do not run a full export unless the user asks — that is their call.
   "overlays": [ { "id":, "src": "overlays/x.mov", "start":, "dur":, "x": 0, "y": 0, "enabled": true } ],
   "cuts":     [ { "start":, "end":, "transition": "crossfade", "tdur": 0.3 } ],
   "zooms":    [ { "id":, "start":, "dur":, "scale": 1.3, "x": 0.5, "y": 0.5, "source": "manual" } ],
+  "frames":   [ { "id":, "start":, "dur": 0.8, "to": "side|corner|full", "shape": "circle|rounded|rect",
+                  "size": 0.42, "side": "right", "corner": "br", "margin": 0.04,
+                  "backdrop": "brand|blur|#rrggbb" } ],
   "recording":{ "screen": "recording/screen.mp4", "cursor": "recording/cursor.json",
                 "marks": [], "zoomSuggestions": [ /* same shape as zooms[], plus confidence */ ] },
   "audio":    { "loudnessLUFS": -14, "polish": "voice", "music": [], "sfx": [] }
