@@ -597,3 +597,25 @@ select:focus { outline: none; border-color: #46506a; }
   padding: 8px 10px; overflow-x: auto; white-space: pre;
 }
 #btnAgentPick.warn { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 45%, var(--line)); }
+
+/* ------------------------------------------------------- live preview state */
+/* The player shows one of two things — the untouched footage, or the edit as it will render —
+   and the difference matters enough that it should never have to be guessed at. */
+.pv-bar { position: absolute; right: 10px; top: 10px; display: flex; align-items: center; gap: 8px; }
+.pv-state {
+  font-size: 11px; font-weight: 600; letter-spacing: .2px;
+  padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in oklab, var(--ink) 72%, transparent);
+  border: 1px solid var(--chip-line); color: var(--chip-ink);
+  backdrop-filter: blur(6px);
+}
+.pv-live { color: var(--accent-ink); background: var(--good); border-color: transparent; }
+.pv-building { color: var(--accent-ink); background: var(--accent); border-color: transparent; }
+.pv-stale { color: color-mix(in oklab, var(--accent) 80%, var(--bone)); border-color: color-mix(in oklab, var(--accent) 45%, var(--chip-line)); }
+.pv-failed { color: var(--bone); background: var(--danger); border-color: transparent; }
+.pv-auto {
+  display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--chip-ink);
+  padding: 3px 9px 3px 7px; border-radius: 999px;
+  background: color-mix(in oklab, var(--ink) 72%, transparent);
+  border: 1px solid var(--chip-line); backdrop-filter: blur(6px);
+}

@@ -2,6 +2,7 @@
 """render_project.py — render the final video FROM project.json (edit-as-data).
 
   python3 render_project.py --project project.json --out FINAL.mp4          # full (applies cuts)
+  python3 render_project.py --project p.json --out preview.mp4 --preview --range 12 40   # what the editor shows
   python3 render_project.py --project project.json --range 190 210 --out preview.mp4
 
 Honors: CUTS (removed ranges → video spliced + captions/scenes/audio re-timed),
@@ -35,6 +36,32 @@ def keep_segments(cuts,dur):
     if cur<dur: segs.append((cur,dur))
     return segs,cuts
 
+def cut_cache_key(cuts,graded,camera,fps,dur,br):
+    """Identity of a cut master: the cuts themselves plus the files they were made from."""
+    import hashlib
+    def stat(pth):
+        try: st=os.stat(pth); return [os.path.basename(pth),st.st_size,int(st.st_mtime)]
+        except OSError: return None
+    payload=json.dumps({"cuts":sorted([[float(c.get("start",0)),float(c.get("end",0)),
+                                        str(c.get("transition","") or ""),float(c.get("tdur",0.3) or 0)]
+                                       for c in cuts]),
+                        "graded":stat(graded),"camera":stat(camera) if camera else None,
+                        "fps":fps,"dur":dur,"br":br},sort_keys=True)
+    return hashlib.sha1(payload.encode()).hexdigest()[:16]
+
+def prune_cache(cdir,keep=4):
+    """Cut masters are big. Keep a few recent ones; the newest is the one being reused."""
+    try: names=[n for n in os.listdir(cdir) if n.startswith(("cut_","cam_","meta_"))]
+    except OSError: return
+    keys=sorted({n.split("_",1)[1].rsplit(".",1)[0] for n in names},
+                key=lambda k: max((os.path.getmtime(os.path.join(cdir,n)) for n in names if k in n),default=0),
+                reverse=True)
+    for k in keys[keep:]:
+        for n in names:
+            if k in n:
+                try: os.remove(os.path.join(cdir,n))
+                except OSError: pass
+
 def make_remap(cuts,xfades=None):
     """original t -> new t. Subtracts removed time before t, plus any transition overlap
     (an xfade of D seconds at a seam pulls everything after it D earlier)."""
@@ -56,12 +83,21 @@ def main():
     # Write the edit as separate layers as well as the flat file, so it can be reviewed — or
     # finished — somewhere else. Off by default: it costs a second pass over the graphics.
     ap.add_argument("--layers",default="",help="directory to write base/graphics/captions/audio layers into")
+    # Preview mode. The editor rebuilds a preview every time the edit changes, so the two things
+    # that matter are that it tells the truth and that it is not expensive. Lower bitrate covers
+    # the second cheaply; the first is why cuts now apply to ranged renders as well (see below).
+    ap.add_argument("--preview",action="store_true",help="cheaper encode + reuse the cut master between runs")
+    ap.add_argument("--no-cuts",action="store_true",help="render the ORIGINAL timeline, ignoring cuts[]")
+    ap.add_argument("--cache",default="",help="where to keep the reusable cut master (default <project>/.preview-cache)")
     a=ap.parse_args()
     P=json.load(open(a.project)); W=os.path.dirname(os.path.abspath(a.project))
     m=P["meta"]; VW,VH,FPS,DUR=m["width"],m["height"],m["fps"],m["duration"]
     graded=os.path.join(W,m["graded"])
     T=a.tmp or tempfile.mkdtemp(prefix="rp_",dir=W); os.makedirs(T,exist_ok=True)
-    HW=["-c:v","h264_videotoolbox","-b:v","14M","-profile:v","high","-pix_fmt","yuv420p","-tag:v","avc1"]
+    # A preview is watched once and thrown away; 14M would spend most of the render writing
+    # bits nobody looks at, and leave >100MB intermediates behind for every rebuild.
+    BR="3M" if a.preview else "14M"
+    HW=["-c:v","h264_videotoolbox","-b:v",BR,"-profile:v","high","-pix_fmt","yuv420p","-tag:v","avc1"]
     d=P["captions"]["defaults"]
     def hxa(s): return s
 
@@ -104,7 +140,12 @@ def main():
     if camera and not os.path.isabs(camera): camera=os.path.join(os.path.dirname(os.path.abspath(a.project)),camera)
     if camera and not os.path.exists(camera): camera=None
 
-    cuts=P.get("cuts",[]) if not a.range else []
+    # Cuts used to be skipped whenever a range was given, so "preview this section" showed the
+    # footage with the cuts still in it — the timeline said one thing and the picture said
+    # another. A and B are on the OUTPUT timeline (every element is remapped before it is
+    # compared against them), so applying cuts here needs nothing else. --no-cuts brings the old
+    # behaviour back for anyone spot-checking the original.
+    cuts=[] if a.no_cuts else P.get("cuts",[])
     remap=lambda t:t; in_cut=lambda t:False; workDur=DUR; src=graded
     if cuts:
         # A cut may ask for a TRANSITION at its seam: {"start":..,"end":..,"transition":"fade",
@@ -121,68 +162,98 @@ def main():
             if tname in ("","none","hard"): continue
             xf_by_pair[(max(0.0,float(c["start"])),min(DUR,float(c["end"])))]=float(c.get("tdur",0.3))
         remap,in_cut=make_remap(cutpairs,xf_by_pair)
-        parts=[]; cam_parts=[]
-        for i,(s0,e0) in enumerate(segs):
-            seg=os.path.join(T,f"seg_{i:03d}.mp4")
-            run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",graded,*HW,
-                 "-r",str(FPS),"-c:a","aac","-b:a","192k","-ar","48000","-ac","2",seg],log=os.path.join(T,f"seg_{i}.log"))
-            parts.append(seg)
-            if camera:
-                # the same seconds removed from the camera, or the speaker drifts out of sync
-                # with their own voice from the first cut onwards
-                cseg=os.path.join(T,f"cam_{i:03d}.mp4")
-                run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",camera,*HW,
-                     "-r",str(FPS),"-an",cseg],log=os.path.join(T,f"cam_seg_{i}.log"))
-                cam_parts.append(cseg)
-        src=os.path.join(T,"graded_cut.mp4")
-        seam_x=[]   # transition duration + ffmpeg name for the seam after segment i
-        for i in range(len(segs)-1):
-            gap_start,gap_end=segs[i][1],segs[i+1][0]
-            xdur=xf_by_pair.get((round(gap_start,6),round(gap_end,6)))
-            if xdur is None:
-                for (ca,cb),dd in xf_by_pair.items():
-                    if abs(ca-gap_start)<0.05 and abs(cb-gap_end)<0.05: xdur=dd; break
-            if xdur:
-                tname=next((c.get("transition","fade") for c in cuts
-                            if abs(float(c["start"])-gap_start)<0.05), "fade")
-                seam_x.append((xdur,XF.get(str(tname).lower(),"fade")))
-            else: seam_x.append(None)
+        # Rebuilding the cut master is the single most expensive thing a preview does — it
+        # re-encodes every kept segment of the whole video before the range is even applied, so a
+        # fifteen-second window cost twenty-two seconds instead of six. It only changes when the
+        # cuts (or the footage) change, so a preview keeps it and reuses it.
+        cached=False; cdir=""
+        if a.preview:
+            cdir=a.cache or os.path.join(W,".preview-cache")
+            key=cut_cache_key(cuts,graded,camera,FPS,DUR,BR)
+            ccut=os.path.join(cdir,f"cut_{key}.mp4"); ccam=os.path.join(cdir,f"cam_{key}.mp4")
+            cmeta=os.path.join(cdir,f"meta_{key}.json")
+            if os.path.exists(ccut) and os.path.exists(cmeta) and (not camera or os.path.exists(ccam)):
+                try:
+                    workDur=float(json.load(open(cmeta))["workDur"])
+                    src=ccut
+                    if camera: camera=ccam
+                    cached=True
+                except Exception:
+                    cached=False        # a half-written cache entry is not worth a failed render
 
-        if any(seam_x):
-            # xfade chain: every transition costs `d` seconds of overlap
-            args=["ffmpeg","-hide_banner","-y"]
-            for pth in parts: args+=["-i",pth]
-            durs=[e0-s0 for s0,e0 in segs]
-            fc=[]; vprev="[0:v]"; aprev="[0:a]"; off=0.0
-            for i in range(1,len(parts)):
-                x=seam_x[i-1]; xdur,tname=(x if x else (0.0,"fade"))
-                off+=durs[i-1]-(xdur if x else 0.0)
-                vout=f"[vx{i}]"; aout=f"[ax{i}]"
-                if x:
-                    fc.append(f"{vprev}[{i}:v]xfade=transition={tname}:duration={xdur}:offset={off:.3f}{vout}")
-                    fc.append(f"{aprev}[{i}:a]acrossfade=d={xdur}:c1=tri:c2=tri{aout}")
-                else:
-                    fc.append(f"{vprev}[{i}:v]xfade=transition=fade:duration=0.001:offset={off:.3f}{vout}")
-                    fc.append(f"{aprev}[{i}:a]acrossfade=d=0.001{aout}")
-                vprev,aprev=vout,aout
-            args+=["-filter_complex",";".join(fc),"-map",vprev,"-map",aprev,*HW,
-                   "-c:a","aac","-b:a","192k","-movflags","+faststart",src]
-            run(args,log=os.path.join(T,"cut_xfade.log"))
-            workDur=sum(durs)-sum(xd for xd,_ in [x for x in seam_x if x])
-        else:
-            lst=os.path.join(T,"segs.txt"); open(lst,"w").write("".join(f"file '{p}'\n" for p in parts))
-            run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",lst,"-c","copy","-movflags","+faststart",src],log=os.path.join(T,"cut_concat.log"))
-            workDur=sum(e-s for s,e in segs)
+        if not cached:
+            parts=[]; cam_parts=[]
+            for i,(s0,e0) in enumerate(segs):
+                seg=os.path.join(T,f"seg_{i:03d}.mp4")
+                run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",graded,*HW,
+                     "-r",str(FPS),"-c:a","aac","-b:a","192k","-ar","48000","-ac","2",seg],log=os.path.join(T,f"seg_{i}.log"))
+                parts.append(seg)
+                if camera:
+                    # the same seconds removed from the camera, or the speaker drifts out of sync
+                    # with their own voice from the first cut onwards
+                    cseg=os.path.join(T,f"cam_{i:03d}.mp4")
+                    run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",camera,*HW,
+                         "-r",str(FPS),"-an",cseg],log=os.path.join(T,f"cam_seg_{i}.log"))
+                    cam_parts.append(cseg)
+            src=os.path.join(T,"graded_cut.mp4")
+            seam_x=[]   # transition duration + ffmpeg name for the seam after segment i
+            for i in range(len(segs)-1):
+                gap_start,gap_end=segs[i][1],segs[i+1][0]
+                xdur=xf_by_pair.get((round(gap_start,6),round(gap_end,6)))
+                if xdur is None:
+                    for (ca,cb),dd in xf_by_pair.items():
+                        if abs(ca-gap_start)<0.05 and abs(cb-gap_end)<0.05: xdur=dd; break
+                if xdur:
+                    tname=next((c.get("transition","fade") for c in cuts
+                                if abs(float(c["start"])-gap_start)<0.05), "fade")
+                    seam_x.append((xdur,XF.get(str(tname).lower(),"fade")))
+                else: seam_x.append(None)
 
-        if camera and cam_parts:
-            # The camera gets the cuts but never the transitions: it is composited on top, so a
-            # crossfade on the picture underneath is the transition. Straight concat keeps it in
-            # step with the audio, which is what matters.
-            cl=os.path.join(T,"cam_segs.txt"); open(cl,"w").write("".join(f"file '{p}'\n" for p in cam_parts))
-            camcut=os.path.join(T,"camera_cut.mp4")
-            run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",cl,"-c","copy",
-                 "-movflags","+faststart",camcut],log=os.path.join(T,"cam_concat.log"))
-            camera=camcut
+            if any(seam_x):
+                # xfade chain: every transition costs `d` seconds of overlap
+                args=["ffmpeg","-hide_banner","-y"]
+                for pth in parts: args+=["-i",pth]
+                durs=[e0-s0 for s0,e0 in segs]
+                fc=[]; vprev="[0:v]"; aprev="[0:a]"; off=0.0
+                for i in range(1,len(parts)):
+                    x=seam_x[i-1]; xdur,tname=(x if x else (0.0,"fade"))
+                    off+=durs[i-1]-(xdur if x else 0.0)
+                    vout=f"[vx{i}]"; aout=f"[ax{i}]"
+                    if x:
+                        fc.append(f"{vprev}[{i}:v]xfade=transition={tname}:duration={xdur}:offset={off:.3f}{vout}")
+                        fc.append(f"{aprev}[{i}:a]acrossfade=d={xdur}:c1=tri:c2=tri{aout}")
+                    else:
+                        fc.append(f"{vprev}[{i}:v]xfade=transition=fade:duration=0.001:offset={off:.3f}{vout}")
+                        fc.append(f"{aprev}[{i}:a]acrossfade=d=0.001{aout}")
+                    vprev,aprev=vout,aout
+                args+=["-filter_complex",";".join(fc),"-map",vprev,"-map",aprev,*HW,
+                       "-c:a","aac","-b:a","192k","-movflags","+faststart",src]
+                run(args,log=os.path.join(T,"cut_xfade.log"))
+                workDur=sum(durs)-sum(xd for xd,_ in [x for x in seam_x if x])
+            else:
+                lst=os.path.join(T,"segs.txt"); open(lst,"w").write("".join(f"file '{p}'\n" for p in parts))
+                run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",lst,"-c","copy","-movflags","+faststart",src],log=os.path.join(T,"cut_concat.log"))
+                workDur=sum(e-s for s,e in segs)
+
+            if camera and cam_parts:
+                # The camera gets the cuts but never the transitions: it is composited on top, so a
+                # crossfade on the picture underneath is the transition. Straight concat keeps it in
+                # step with the audio, which is what matters.
+                cl=os.path.join(T,"cam_segs.txt"); open(cl,"w").write("".join(f"file '{p}'\n" for p in cam_parts))
+                camcut=os.path.join(T,"camera_cut.mp4")
+                run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",cl,"-c","copy",
+                     "-movflags","+faststart",camcut],log=os.path.join(T,"cam_concat.log"))
+                camera=camcut
+
+        if a.preview and not cached and cdir:
+            try:
+                os.makedirs(cdir,exist_ok=True)
+                shutil.copy2(src,ccut)
+                if camera: shutil.copy2(camera,ccam)
+                json.dump({"workDur":workDur},open(cmeta,"w"))
+                prune_cache(cdir)
+            except Exception:
+                pass                    # a cache that cannot be written is a slow render, not a broken one
 
     A,B=(a.range if a.range else [0.0,workDur]); span=B-A
     # A and B stay on the ORIGINAL timeline for the whole render, because every element's times

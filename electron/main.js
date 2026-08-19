@@ -324,6 +324,8 @@ function startRender(webContents, opts) {
       // Layered export: the same edit written out as picture / graphics / captions / sound as
       // well as the flat file, for review or for finishing somewhere else.
       layers: opts.layers ? 'layers' : '',
+      preview: !!opts.preview,
+      noCuts: !!opts.noCuts,
       work: settings.work,
       engine: settings.engine,
       python: settings.python,
@@ -1022,6 +1024,9 @@ function registerIpc() {
     recent: settings.recent, hasWorkspace: !!settings.work,
     skipHome: (() => { const v = openEditorNext; openEditorNext = false; return v; })(),
     version: app.getVersion(), platform: process.platform, dev: isDev,
+    // Automated runs must not kick off background renders on every edit: it burns the machine
+    // and swaps the player's source underneath tests that are checking something else.
+    testing: !!process.env.CVE_SMOKE,
   }));
 
   // Which coding agent does the editing. Everything the app writes is agent-neutral — the brief

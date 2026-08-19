@@ -180,6 +180,11 @@ contextBridge.exposeInMainWorld('editor', {
     start: (o = {}) => ipcRenderer.invoke('render:start', {
       out: str(o.out) || 'preview.mp4',
       range: Array.isArray(o.range) && o.range.length === 2 ? [num(o.range[0]), num(o.range[1])] : null,
+      // These three were being dropped here. `layers` in particular meant the Layers tickbox on
+      // Export did nothing at all — main read opts.layers, and the bridge never sent it.
+      layers: !!o.layers,
+      preview: !!o.preview,
+      noCuts: !!o.noCuts,
     }),
     cancel: (id) => ipcRenderer.invoke('render:cancel', str(id)),
     onEvent: on(renderListeners),

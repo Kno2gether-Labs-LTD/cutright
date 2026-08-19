@@ -16,12 +16,18 @@ window.__cve = {
   get zoom() { return zoom; }, get tx() { return { sel: tx.sel, open: tx.open, words: tx.words.length }; },
   get sel() { return sel; }, reloads: 0,
   loadVideo: (n, s) => loadVideo(n, s), termLog: '',
+  get preview() { return { state: preview.state, auto: preview.auto, covers: preview.covers,
+                           showing: showingPreview(), removed: cutMap.removed }; },
+  now: () => timelineNow(), seek: (t) => seekTimeline(t),
 };
 
 // ---------------------------------------------------------------- boot
 async function boot() {
   const cfg = await E.config();
   WORK = cfg.work;
+  // Under the test harness the preview is off unless a test asks for it: a background render
+  // firing on every edit would swap the player's source under tests checking something else.
+  if (cfg.testing) { preview.auto = false; const c = $('#chkAutoPreview'); if (c) c.checked = false; }
   $('#work').textContent = cfg.work ? cfg.work.replace(/^.*\//, '') : 'no project';
   $('#btnWorkspace').title = cfg.work || 'Choose a project';
   initNewProject();
@@ -120,6 +126,7 @@ async function reloadIfChanged() {
   const p = await E.getProject();
   if (p.error || JSON.stringify(p) === JSON.stringify(project)) return;
   project = p; dur = p.meta.duration || 1; fps = p.meta.fps || 30;
+  rebuildCutMap();
   window.__cve.reloads++;
   $('#tcDur').textContent = fmt(dur);
   renderTimeline(); renderInspector();
@@ -294,14 +301,22 @@ function fillLane(laneSel, items, kind) {
 }
 
 function positionPlayhead() {
-  const t = video.currentTime || 0;
+  const t = timelineNow() || 0;
   $('#playhead').style.left = t2x(t) + 'px';
   $('#tcNow').textContent = fmtMs(t);
 }
 
 let lastT = -1;
 function tick() {
-  const t = video.currentTime || 0;
+  const t = timelineNow() || 0;
+  // A cut removes a span; the player skips it. This is the one part of the edit that needs no
+  // render to be truthful, so it is honoured the instant the cut exists — including while a
+  // preview is still building, and when there is no preview at all.
+  if (!showingPreview() && cutMap.inCut(t)) {
+    const to = cutMap.skipTo(t);
+    if (to == null) { video.pause(); video.currentTime = Math.max(0, dur - 0.05); }
+    else if (Math.abs((video.currentTime || 0) - to) > 0.01) video.currentTime = to;
+  }
   if (t !== lastT) {
     lastT = t;
     positionPlayhead();
@@ -320,7 +335,7 @@ function initTimelineInteraction() {
   // click anywhere empty (or the ruler) → move the playhead
   const seekFrom = (ev) => {
     const rect = $('#tlInner').getBoundingClientRect();
-    video.currentTime = clamp(x2t(ev.clientX - rect.left), 0, dur);
+    seekTimeline(x2t(ev.clientX - rect.left));
     positionPlayhead();
   };
   $('#ruler').addEventListener('pointerdown', (ev) => {
@@ -356,13 +371,29 @@ function initTimelineInteraction() {
   $('#btnAgentBrief').onclick = () => showAgentBrief();
   $('#btnAgentPick').onclick = () => showAgentPicker();
   refreshAgents();
+
+  $('#chkAutoPreview').onchange = (ev) => {
+    preview.auto = !!ev.target.checked;
+    if (preview.auto) schedulePreview(true);
+    else { if (preview.job) { E.render.cancel(preview.job); preview.job = null; }
+           preview.state = 'none'; showMaster(); }
+    renderPreviewBadge();
+  };
+  // Being able to flip back to the untouched footage is worth a click: "is that in the recording
+  // or did I do that?" is the question this answers.
+  $('#previewState').onclick = () => {
+    if (showingPreview()) { showMaster(); setStatus('Showing the original footage', 'ok'); }
+    else if (preview.state === 'stale' || preview.state === 'failed') buildPreview();
+    else schedulePreview(true);
+  };
+  renderPreviewBadge();
 }
 
 // ---------------------------------------------------------------- selection + inspector
 function select(kind, index) {
   sel = { kind, index };
   const el = elemOf(sel);
-  if (el && el.start != null) video.currentTime = clamp(el.start, 0, dur);
+  if (el && el.start != null) seekTimeline(el.start);
   renderTimeline(); renderInspector();
   // scroll the selection into view
   const x = t2x(el?.start || 0), scroll = $('#tlScroll');
@@ -552,8 +583,8 @@ function renderCutInspector(box, e) {
     field('Cut end', e.end, (v) => { e.end = +v; save(); renderTimeline(); }, 'number'),
   ]));
   box.appendChild(btnRow(
-    btn('Set start = playhead', () => { e.start = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
-    btn('Set end = playhead', () => { e.end = +video.currentTime.toFixed(2); save(); renderInspector(); renderTimeline(); }),
+    btn('Set start = playhead', () => { e.start = +timelineNow().toFixed(2); save(); renderInspector(); renderTimeline(); }),
+    btn('Set end = playhead', () => { e.end = +timelineNow().toFixed(2); save(); renderInspector(); renderTimeline(); }),
   ));
   box.appendChild(sep());
   box.appendChild(sechead('Transition at this seam'));
@@ -606,11 +637,11 @@ function renderAudioInspector(box, e) {
 // same project survives a change of resolution.
 function addZoom() {
   project.zooms = project.zooms || [];
-  project.zooms.push({ id: 'z' + Date.now(), start: +(video.currentTime || 0).toFixed(2),
+  project.zooms.push({ id: 'z' + Date.now(), start: +(timelineNow() || 0).toFixed(2),
                        dur: 2, scale: 1.3, x: 0.5, y: 0.5, source: 'manual' });
   project.zooms.sort((a, b) => a.start - b.start);
   save(); renderTimeline();
-  select('zoom', project.zooms.findIndex((z) => z.source === 'manual' && z.start === +(video.currentTime || 0).toFixed(2)));
+  select('zoom', project.zooms.findIndex((z) => z.source === 'manual' && z.start === +(timelineNow() || 0).toFixed(2)));
 }
 
 // A framing move: where the picture goes, what shape it becomes, and what sits behind it.
@@ -618,7 +649,7 @@ function addZoom() {
 // branded wash — because the point of the button is not to make you fill in a form.
 function addFrame() {
   project.frames = project.frames || [];
-  const at = +(video.currentTime || 0).toFixed(2);
+  const at = +(timelineNow() || 0).toFixed(2);
   const goingSmall = !lastFrameStateBefore(at) || lastFrameStateBefore(at).to === 'full';
   project.frames.push(goingSmall
     ? { id: 'fr' + Date.now(), start: at, dur: 0.8, to: 'corner', shape: 'circle',
@@ -702,7 +733,7 @@ function renderFrameInspector(box, e) {
 
   box.appendChild(btnRow(
     btn('Preview this move', () => {
-      video.currentTime = clamp(e.start - 0.7, 0, dur);
+      seekTimeline(e.start - 0.7);
       video.play().catch(() => {});
       setTimeout(() => video.pause(), ((e.dur || 0.8) + 1.6) * 1000);
     }),
@@ -745,7 +776,7 @@ function renderZoomInspector(box, e) {
     field('Centre y', e.y ?? 0.5, (v) => { e.y = +v; save(); renderTimeline(); }, 'number'),
   ]));
   box.appendChild(btnRow(
-    btn('Preview', () => { video.currentTime = clamp(e.start - 0.5, 0, dur); video.play().catch(() => {});
+    btn('Preview', () => { seekTimeline(e.start - 0.5); video.play().catch(() => {});
       setTimeout(() => video.pause(), ((e.dur || 2) + 1) * 1000); }),
     btn('1.2× subtle', () => { e.scale = 1.2; save(); renderInspector(); renderTimeline(); }),
     btn('1.5× punchy', () => { e.scale = 1.5; save(); renderInspector(); renderTimeline(); }),
@@ -808,7 +839,7 @@ function renderZoomSuggestPanel() {
     lbl.textContent = `${(z.scale || 1.3).toFixed(2)}× · ${(z.dur || 2).toFixed(1)}s${z.label ? ' · ' + z.label : ''}`;
     const rsn = document.createElement('span'); rsn.className = 'rsn ' + z.source; rsn.textContent = z.source;
     row.append(cb, t, lbl, rsn);
-    row.onclick = () => { video.currentTime = clamp(z.start - 0.6, 0, dur); video.play().catch(() => {});
+    row.onclick = () => { seekTimeline(z.start - 0.6); video.play().catch(() => {});
       setTimeout(() => video.pause(), ((z.dur || 2) + 1.2) * 1000); };
     row.title = `${z.source} at ${z.start}s · ${z.confidence || 'medium'} confidence · click to watch it`;
     list.appendChild(row);
@@ -873,6 +904,10 @@ let saveT, lastEdit = 0;
 function save() {
   lastEdit = Date.now();
   setStatus('Unsaved…');
+  // The cut map is what the playhead and the player run on, so it has to move with the edit
+  // rather than with the save that follows it.
+  rebuildCutMap();
+  schedulePreview();
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
     const r = await E.saveProject(project);
@@ -893,7 +928,7 @@ document.addEventListener('click', (ev) => {
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({
-      id: k + Date.now(), src: '', start: +(video.currentTime || 0).toFixed(2),
+      id: k + Date.now(), src: '', start: +(timelineNow() || 0).toFixed(2),
       dur: k === 'music' ? 30 : 1, gain: k === 'music' ? -18 : -6,
     });
     save(); renderTimeline(); select(k, project.audio[k].length - 1);
@@ -904,7 +939,7 @@ document.addEventListener('click', (ev) => {
 
 function addCut() {
   project.cuts = project.cuts || [];
-  const t = +(video.currentTime || 0).toFixed(2);
+  const t = +(timelineNow() || 0).toFixed(2);
   project.cuts.push({ start: t, end: Math.min(dur, t + 2) });
   save(); renderTimeline(); select('cut', project.cuts.length - 1);
 }
@@ -914,7 +949,7 @@ async function addOverlay() {
   if (!r?.path) return;
   project.overlays = project.overlays || [];
   project.overlays.push({
-    id: 'ov' + Date.now(), src: r.path, start: +(video.currentTime || 0).toFixed(2),
+    id: 'ov' + Date.now(), src: r.path, start: +(timelineNow() || 0).toFixed(2),
     dur: r.duration || 4, x: 0, y: 0,
   });
   save(); renderTimeline(); select('overlay', project.overlays.length - 1);
@@ -1017,7 +1052,7 @@ function renderSoundPanel() {
       lbl.textContent = (l.src || 'no file').split('/').pop() + ` · ${l.gain ?? -18}dB`;
       const rsn = document.createElement('span'); rsn.className = 'rsn ' + l.kind; rsn.textContent = l.kind;
       row.append(t, lbl, rsn);
-      row.onclick = () => { video.currentTime = clamp((l.start || 0) - 0.3, 0, dur); video.play().catch(() => {}); };
+      row.onclick = () => { seekTimeline((l.start || 0) - 0.3); video.play().catch(() => {}); };
       list.appendChild(row);
     });
     wrap.appendChild(list);
@@ -1282,7 +1317,7 @@ async function openTranscriptEditor() {
   tx.open = true;
   // Transcript times are on the ORIGINAL timeline, so play the uncut master while editing.
   tx.prevSrc = $('#previewTag').textContent;
-  loadVideo(project.meta.graded || 'graded_master.mp4', video.currentTime);
+  loadVideo(project.meta.graded || 'graded_master.mp4', timelineNow());
   renderTranscriptPanel();
 }
 
@@ -1343,7 +1378,7 @@ function renderTranscriptPanel() {
     if (!ev.target.classList?.contains('tx-w')) return;
     const i = +ev.target.dataset.i;
     if (ev.shiftKey && tx.anchor != null) tx.sel = [Math.min(tx.anchor, i), Math.max(tx.anchor, i)];
-    else { tx.anchor = i; tx.sel = [i, i]; video.currentTime = clamp(tx.words[i].start, 0, dur); }
+    else { tx.anchor = i; tx.sel = [i, i]; seekTimeline(tx.words[i].start); }
     dragging = true; paintSelection(doc);
   });
   doc.addEventListener('pointermove', (ev) => {
@@ -1518,7 +1553,7 @@ function openLookPanel() {
   ]));
 
   box.appendChild(sep());
-  box.appendChild(btnRow(btn('Preview this look here', () => previewAround(video.currentTime, 6), 'primary')));
+  box.appendChild(btnRow(btn('Preview this look here', () => previewAround(timelineNow(), 6), 'primary')));
   box.appendChild(hint('Grain 0–40, vignette and bloom 0–1. The look is applied when rendering, over the graded master — nothing is baked in, so you can change your mind at any time.'));
 }
 
@@ -1776,11 +1811,11 @@ async function insertPreset(template, preset, vars) {
       project.overlays = project.overlays || [];
       project.overlays.push({
         id: `${preset.id}-${Date.now()}`, src: rel,
-        start: +(video.currentTime || 0).toFixed(2), dur: m.duration || preset.duration || 4,
+        start: +(timelineNow() || 0).toFixed(2), dur: m.duration || preset.duration || 4,
         x: 0, y: 0, template: template.id, preset: preset.id, vars,
       });
       save(); renderTimeline();
-      setStatus(`“${preset.name}” added at ${fmt(video.currentTime || 0)}`, 'ok');
+      setStatus(`“${preset.name}” added at ${fmt(timelineNow() || 0)}`, 'ok');
       select('overlay', project.overlays.length - 1);
     }
   });
@@ -2160,7 +2195,7 @@ function renderAutoCutPanel() {
     const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = p.label;
     const rsn = document.createElement('span'); rsn.className = 'rsn ' + p.reason; rsn.textContent = p.reason;
     row.append(cb, t, lbl, rsn);
-    row.onclick = () => { video.currentTime = clamp(p.start - 0.6, 0, dur); video.play().catch(() => {});
+    row.onclick = () => { seekTimeline(p.start - 0.6); video.play().catch(() => {});
       setTimeout(() => video.pause(), Math.min(4000, (p.end - p.start + 1.4) * 1000)); };
     row.title = `${p.start}s → ${p.end}s · ${p.confidence} confidence · click to hear it`;
     list.appendChild(row);
@@ -2248,14 +2283,19 @@ function busy(on) {
   $('#progress').hidden = !on;
   if (!on) $('#progressBar').style.width = '0%';
 }
+// "Preview this section" is now the same mechanism as the automatic one, aimed somewhere
+// specific. Two code paths writing the same file and both loading it into the same player was
+// only ever going to race.
 function previewAround(start, span) {
-  const a = Math.max(0, start - 2), b = Math.min(dur, start + (span || 8) + 2);
-  runRender({ range: [+a.toFixed(1), +b.toFixed(1)], out: 'preview.mp4', label: 'Preview' });
+  seekTimeline(start);
+  const a = Math.max(0, cutMap.toMedia(Math.max(0, start - 2)));
+  const b = Math.min(cutMap.duration, cutMap.toMedia(Math.min(dur, start + (span || 8) + 2)));
+  buildPreview([+a.toFixed(2), +Math.max(a + 1, b).toFixed(2)]);
 }
 $('#btnCancel').onclick = () => { if (job) { E.render.cancel(job); setStatus('Cancelling…', 'working'); } };
 $('#btnPreview').onclick = () => {
   const e = elemOf(sel);
-  previewAround(e ? (e.start || 0) : video.currentTime, e?.dur);
+  previewAround(e ? (e.start || 0) : timelineNow(), e?.dur);
 };
 $('#btnExport').onclick = () => runRender({ range: null, out: 'FINAL.mp4', label: 'Export',
   layers: !!$('#chkLayers')?.checked });
@@ -2269,10 +2309,10 @@ function initKeys() {
     const frame = 1 / (fps || 30);
     switch (ev.key) {
       case ' ': ev.preventDefault(); video.paused ? video.play() : video.pause(); break;
-      case 'ArrowLeft': ev.preventDefault(); video.currentTime = clamp(video.currentTime - (ev.shiftKey ? 1 : frame), 0, dur); break;
-      case 'ArrowRight': ev.preventDefault(); video.currentTime = clamp(video.currentTime + (ev.shiftKey ? 1 : frame), 0, dur); break;
-      case 'Home': video.currentTime = 0; break;
-      case 'End': video.currentTime = Math.max(0, dur - 0.1); break;
+      case 'ArrowLeft': ev.preventDefault(); seekTimeline(timelineNow() - (ev.shiftKey ? 1 : frame)); break;
+      case 'ArrowRight': ev.preventDefault(); seekTimeline(timelineNow() + (ev.shiftKey ? 1 : frame)); break;
+      case 'Home': seekTimeline(0); break;
+      case 'End': seekTimeline(dur - 0.1); break;
       case 's': case 'S': if (project) addCut(); break;
       case 'Backspace': case 'Delete':
         if (tx.open && tx.sel) { ev.preventDefault(); cutSelection(); }
@@ -2430,4 +2470,130 @@ async function renderLibrary(cfg) {
     };
     box.appendChild(b);
   });
+}
+
+// ---------------------------------------------------------------- live preview
+//
+// The complaint this answers: you accept an auto-cut or a zoom, the timeline redraws, and the
+// player keeps showing the untouched footage. The edit was real but invisible, so there was no
+// way to judge it without exporting.
+//
+// Two things fix it, and they are deliberately different in kind:
+//
+//   • Cuts are honoured in the player immediately. A cut removes a span, and the player can just
+//     skip it — that is exactly what the render does, so there is nothing to get wrong and no
+//     waiting.
+//   • Everything else (zooms, framing, captions, panels, the template) is what the ENGINE draws,
+//     so it comes from the engine: a preview render kicked off in the background whenever the
+//     edit settles. Reimplementing the compositor in the page would give a second opinion about
+//     what your video looks like, and the moment those two disagree the preview is worse than
+//     useless. The engine's answer is the only one worth showing.
+//
+// The player therefore runs on one of two clocks and the rest of the app must not care, so all
+// of it is expressed in ORIGINAL time here and converted at the seam.
+
+let cutMap = window.TimeMap.makeCutMap([], 1);
+let preview = { state: 'none', covers: null, file: 'preview.mp4', auto: true, pct: 0, job: null };
+let previewT = null;
+
+const showingPreview = () => preview.state === 'live' && $('#previewTag').textContent === preview.file;
+
+// Where the playhead is, in the time the whole editor thinks in.
+function timelineNow() {
+  const m = video.currentTime || 0;
+  if (!showingPreview()) return m;
+  return cutMap.toTimeline(m + (preview.covers ? preview.covers[0] : 0));
+}
+
+// Put the playhead at an original-timeline moment, whichever file is loaded.
+function seekTimeline(t) {
+  const want = clamp(t, 0, dur);
+  if (!showingPreview()) { video.currentTime = want; return; }
+  const out = cutMap.toMedia(want);
+  const [a, b] = preview.covers || [0, Infinity];
+  if (out < a - 0.05 || out > b + 0.05) {
+    // Outside what has been rendered: fall back to the footage rather than seek to a lie,
+    // and ask for a preview around the new position.
+    showMaster(want);
+    schedulePreview(true);
+    return;
+  }
+  video.currentTime = clamp(out - a, 0, Math.max(0.01, b - a));
+}
+
+function showMaster(seekTo) {
+  const master = project?.meta?.graded || 'graded_master.mp4';
+  preview.state = preview.state === 'live' ? 'stale' : preview.state;
+  loadVideo(master, seekTo != null ? seekTo : timelineNow());
+  renderPreviewBadge();
+}
+
+function rebuildCutMap() {
+  cutMap = window.TimeMap.makeCutMap(project?.cuts || [], dur);
+}
+
+// A preview covers a window around the playhead rather than the whole video: a window costs a
+// few seconds, the whole thing costs most of a minute, and you are looking at one place.
+const PREVIEW_WINDOW = 45;
+function previewRange() {
+  const here = cutMap.toMedia(clamp(timelineNow(), 0, dur));
+  const outDur = cutMap.duration;
+  let a = Math.max(0, here - PREVIEW_WINDOW * 0.35);
+  let b = Math.min(outDur, a + PREVIEW_WINDOW);
+  a = Math.max(0, b - PREVIEW_WINDOW);
+  return [+a.toFixed(2), +b.toFixed(2)];
+}
+
+function schedulePreview(now) {
+  if (!preview.auto) { preview.state = preview.state === 'none' ? 'none' : 'stale'; renderPreviewBadge(); return; }
+  if (preview.state === 'live' || preview.state === 'building') preview.state = 'stale';
+  renderPreviewBadge();
+  clearTimeout(previewT);
+  // Wait for the edit to settle. Rebuilding on every keystroke would spend the machine on
+  // renders nobody waits for.
+  previewT = setTimeout(buildPreview, now ? 150 : 1200);
+}
+
+function buildPreview(rangeOverride) {
+  if (!project) return;
+  if (!preview.auto && !rangeOverride) return;
+  if (preview.job) { E.render.cancel(preview.job); preview.job = null; }
+  const range = rangeOverride || previewRange();
+  if (range[1] - range[0] < 0.5) return;
+  preview.state = 'building'; preview.pct = 0; preview.covers = range;
+  renderPreviewBadge();
+
+  let job = null;
+  const off = E.render.onEvent((m) => {
+    if (job && m.id !== job) return;
+    if (m.type === 'progress') { preview.pct = m.pct || 0; renderPreviewBadge(); }
+    if (m.type === 'error') { preview.state = 'failed'; preview.job = null; off?.(); renderPreviewBadge(); }
+    if (m.type === 'done') {
+      preview.job = null; off?.();
+      if (m.code === 0) {
+        const at = timelineNow();
+        preview.state = 'live';
+        loadVideo(preview.file, null);
+        // Land on the same moment of the video, not the same offset into a different file.
+        const out = cutMap.toMedia(clamp(at, 0, dur));
+        video.addEventListener('loadedmetadata', () => {
+          video.currentTime = clamp(out - range[0], 0, Math.max(0.01, range[1] - range[0]));
+        }, { once: true });
+      } else preview.state = 'failed';
+      renderPreviewBadge();
+    }
+  });
+  E.render.start({ out: preview.file, range, preview: true }).then((r) => { job = r.id; preview.job = r.id; });
+}
+
+function renderPreviewBadge() {
+  const el = $('#previewState');
+  if (!el) return;
+  const t = { none: 'Preview off', building: `Building preview ${Math.round(preview.pct)}%`,
+              live: 'Preview live', stale: 'Preview out of date', failed: 'Preview failed' }[preview.state];
+  el.textContent = t;
+  el.className = 'pv-state pv-' + preview.state;
+  el.title = preview.state === 'live'
+    ? 'The player is showing the edit as it will render — cuts, zooms, framing, captions and panels.'
+    : 'The player is showing the untouched footage. Cuts are still skipped as you play.';
 }

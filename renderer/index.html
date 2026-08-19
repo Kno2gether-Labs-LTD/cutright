@@ -41,6 +41,11 @@
     <div class="preview">
       <video id="video" controls playsinline preload="metadata"></video>
       <div id="previewTag" class="tag">FINAL.mp4</div>
+      <div class="pv-bar">
+        <button id="previewState" class="pv-state pv-none" title="What the player is showing">Preview off</button>
+        <label class="pv-auto" title="Rebuild the preview automatically a moment after you stop editing">
+          <input type="checkbox" id="chkAutoPreview" checked><span>Auto</span></label>
+      </div>
     </div>
 
     <div class="hsplit" id="splitTimeline" title="Drag to resize the timeline"></div>
@@ -280,6 +285,7 @@
 
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
+<script src="timemap.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

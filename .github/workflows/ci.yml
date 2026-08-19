@@ -35,6 +35,10 @@ jobs:
         run: node scripts/check-keys.mjs
       - name: MCP wiring (the key never lands in .mcp.json)
         run: node scripts/check-mcp.mjs
+      - name: Preview time mapping (the app and the engine agree)
+        # The render half needs ffmpeg and Pillow, so it runs in the test job; this is the
+        # arithmetic, which is where a drifting playhead would come from.
+        run: CVE_SKIP_RENDER=1 node scripts/check-preview.mjs
       - name: Agents (only what is installed is offered)
         run: node scripts/check-agents.mjs
       - name: Library (recordings show up as projects, labelled)
@@ -80,6 +84,8 @@ jobs:
         run: node scripts/check-layers.mjs
       - name: Audio (music steps back under the voice)
         run: node scripts/check-audio.mjs
+      - name: Preview (what you watch is what will render)
+        run: node scripts/check-preview.mjs
       - name: Publish the result
         if: always()
         uses: actions/upload-artifact@v4

@@ -1142,6 +1142,62 @@ export async function runEditTests({ win, settings, app }) {
     return { added: added.length, x: z.x, y: z.y, start: z.start };
   });
 
+  await test('preview: a cut is skipped as you play, without waiting for a render', async () => {
+    // The complaint this answers: accept an auto-cut, the timeline redraws, and the player keeps
+    // playing the removed seconds. A cut needs no render to be honoured — it is a span the
+    // player can skip — so it must work the moment the cut exists.
+    const p = disk();
+    const before = p.cuts || [];
+    p.cuts = [{ start: at(0.30), end: at(0.45) }];
+    await writeProject(p);
+    await settle();
+
+    const removed = await js(`window.__cve.preview.removed`);
+    expect(Math.abs(removed - (at(0.45) - at(0.30))) < 0.05,
+      `the player thinks ${removed}s was removed, expected ${(at(0.45) - at(0.30)).toFixed(2)}s`);
+
+    // Land inside the cut and let a frame or two go by.
+    await js(`window.__cve.seek(${at(0.35)})`);
+    await wait(400);
+    const landed = await js(`window.__cve.now()`);
+    expect(landed >= at(0.45) - 0.05,
+      `the playhead sat at ${landed.toFixed(2)}s, inside a cut that ends at ${at(0.45).toFixed(2)}s`);
+
+    // …and a moment outside the cut is left exactly where it was.
+    await js(`window.__cve.seek(${at(0.6)})`);
+    await wait(250);
+    const kept = await js(`window.__cve.now()`);
+    expect(Math.abs(kept - at(0.6)) < 0.15, `a moment outside the cut moved: ${kept} vs ${at(0.6)}`);
+
+    p.cuts = before;
+    await writeProject(p);
+    await settle();
+    return { removed: +removed.toFixed(2), skippedTo: +landed.toFixed(2) };
+  });
+
+  await test('preview: an edit marks the preview out of date rather than letting it lie', async () => {
+    // The failure this guards against is the quiet one: you change the edit, the player carries
+    // on showing the previous render, and nothing says the two have parted company.
+    const states = new Set();
+    await js(`(() => { window.__cve.previewProbe = []; })()`);
+    const p = disk();
+    p.zooms = [...(p.zooms || []), { id: 'pv' + Date.now(), start: at(0.5), dur: 1, scale: 1.2, x: 0.5, y: 0.5 }];
+    await writeProject(p);
+    await settle();
+    const after = await js(`window.__cve.preview`);
+    states.add(after.state);
+    expect(after.state !== 'live',
+      `after an edit the player still claims the preview is current (${after.state})`);
+    expect(['none', 'stale', 'building', 'failed'].includes(after.state), 'unknown preview state: ' + after.state);
+    // Auto rebuilding is off under the harness, so nothing should be rendering in the background.
+    expect(after.auto === false, 'the test run is spawning preview renders');
+
+    p.zooms = (p.zooms || []).filter((z) => !String(z.id).startsWith('pv'));
+    await writeProject(p);
+    await settle();
+    return { state: after.state, auto: after.auto };
+  });
+
   await test('agent: the picker lists what is installed and greys out the rest', async () => {
     await js(`document.querySelector('#btnAgentPick').click()`);
     await wait(500);
