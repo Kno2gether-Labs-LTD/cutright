@@ -429,8 +429,10 @@ function registerRecordingIpc() {
       types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: false });
     const list = srcs
       .filter((s) => !/^Cutright$|^Record —/.test(s.name))       // do not offer our own windows
+      // An empty NativeImage stringifies to a data URL with no data, which the page renders as
+      // a broken-image icon. When the OS withholds the picture, say so with a placeholder.
       .map((s) => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'),
-                     thumbnail: s.thumbnail.toDataURL() }));
+                     thumbnail: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL() }));
     // Every Mac has at least one display. If none come back, macOS is refusing to hand them
     // over — the permission is denied no matter what getMediaAccessStatus claims.
     const denied = process.platform === 'darwin' && !list.some((s) => s.screen);

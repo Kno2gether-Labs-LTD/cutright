@@ -32,7 +32,10 @@ async function boot() {
   sources.forEach((s, i) => {
     const b = document.createElement('button');
     b.className = 'rec-src' + (i === 0 ? ' sel' : '');
-    b.innerHTML = `<img src="${s.thumbnail}" alt=""><span>${s.screen ? 'Screen — ' : ''}${s.name}</span>`;
+    b.innerHTML = (s.thumbnail
+        ? `<img src="${s.thumbnail}" alt="">`
+        : `<span class="rec-noshot">${s.screen ? 'screen' : 'window'} — no preview available</span>`)
+      + `<span>${s.screen ? 'Screen — ' : ''}${s.name}</span>`;
     b.onclick = () => { chosen = s.id; [...list.children].forEach((c) => c.classList.remove('sel')); b.classList.add('sel'); };
     list.appendChild(b);
   });

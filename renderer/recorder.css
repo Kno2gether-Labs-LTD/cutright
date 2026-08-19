@@ -52,3 +52,11 @@
   color: var(--amber, #f3b04a); font: inherit; text-decoration: underline; cursor: pointer;
 }
 .link:hover { color: var(--ink, #f5f3ee); }
+
+/* macOS hands back an empty image when it will not let us look at a window */
+.rec-noshot {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  aspect-ratio: 16 / 9; padding: 0 .5rem;
+  background: repeating-linear-gradient(45deg, #171614, #171614 6px, #1c1b18 6px, #1c1b18 12px);
+  color: #7c776d; font-size: 11px;
+}

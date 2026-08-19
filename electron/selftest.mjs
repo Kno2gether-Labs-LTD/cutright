@@ -659,12 +659,17 @@ export async function runEditTests({ win, settings, app }) {
       const [listed, perms] = await Promise.all([
         window.editor.rec.sources(), window.editor.rec.permissions() ]);
       const sources = listed.sources;
-      return { count: sources.length, hasThumb: sources.every(s => /^data:image/.test(s.thumbnail)),
+      // A thumbnail is either real image data or an honest null — never an empty data URL,
+      // which the page would render as a broken-image icon.
+      const shapes = sources.map(s => s.thumbnail === null ? 'none'
+        : (s.thumbnail.startsWith('data:image/') && s.thumbnail.length > 128) ? 'image' : 'broken');
+      return { count: sources.length, shapes: [...new Set(shapes)],
                names: sources.slice(0,2).map(s => s.name.slice(0,24)),
                denied: listed.screenCaptureDenied, perms };
     })()`, true);
     expect(r.count > 0, 'no capturable sources were found');
-    expect(r.hasThumb, 'a source came back without a preview thumbnail');
+    expect(!r.shapes.includes('broken'),
+      'a source came back with an unusable thumbnail — the picker would show a broken image');
     // The app must be able to tell that macOS is withholding the displays — a silent empty
     // recording is the one failure a user cannot diagnose for themselves.
     expect(typeof r.denied === 'boolean', 'rec:sources does not report whether capture is blocked');
