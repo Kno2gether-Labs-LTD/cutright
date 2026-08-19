@@ -341,6 +341,7 @@ function initTimelineInteraction() {
     }
   }, { passive: false });
 
+  $('#btnPrepare').onclick = () => runPrepare();
   $('#btnZoomSuggest').onclick = () => openZoomSuggestions();
   $('#btnZoomIn').onclick = () => setZoom(zoom * 1.5);
   $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
@@ -1739,6 +1740,109 @@ async function runTranscribe() {
   });
   const r = await E.transcribe.start(stt.opts);
   if (r?.error) { stt.busy = false; off(); setStatus('Transcribe failed: ' + r.error, 'error'); renderTranscribePanel(); }
+}
+
+// ---------------------------------------------------------------- prepare (structural pass)
+// One action, in the order the work actually depends on: words, then cuts, then who has the
+// frame, then the pack's look and pacing. Everything it decides is written down with a reason,
+// because the next pass — the one that makes it look good — is done by an agent reading this.
+let prep = { busy: false, log: [] };
+
+async function runPrepare() {
+  if (!project || prep.busy) return;
+  prep = { busy: true, log: [] };
+  $('#btnPrepare').disabled = true;
+  setStatus('Preparing the edit…', 'working');
+  renderPreparePanel();
+
+  const off = E.prepare.onEvent((m) => {
+    if (m.type === 'progress') {
+      prep.log.push(`${m.stage}: ${m.detail || ''}`);
+      setStatus(`${m.stage}: ${m.detail || ''}`, 'working');
+      renderPreparePanel(m.pct);
+    }
+    if (m.type === 'error') {
+      prep.busy = false; off(); $('#btnPrepare').disabled = false;
+      setStatus('Prepare failed: ' + m.error, 'error');
+      prep.log.push('failed: ' + m.error);
+      renderPreparePanel();
+    }
+    if (m.type === 'done') {
+      prep.busy = false; off(); $('#btnPrepare').disabled = false;
+      prep.result = m;
+      setStatus(`Prepared — ${m.did?.length || 0} decisions written`, 'ok');
+      loadProject().then(() => renderPreparePanel(100));
+    }
+  });
+
+  const r = await E.prepare.start({
+    template: project.meta?.template || project.brief?.template?.id || null,
+    options: {},
+  });
+  if (r?.error) {
+    prep.busy = false; off(); $('#btnPrepare').disabled = false;
+    setStatus('Prepare failed: ' + r.error, 'error');
+  }
+}
+
+function renderPreparePanel(pct) {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'prepare';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'prepare';
+  const when = document.createElement('span'); when.textContent = prep.busy ? 'working…' : 'the structural pass';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+
+  if (prep.busy || pct != null) {
+    const bar = document.createElement('div'); bar.className = 'progress';
+    const fill = document.createElement('div'); fill.style.width = Math.max(3, Math.round(pct || 3)) + '%';
+    bar.appendChild(fill); wrap.appendChild(bar);
+  }
+
+  const sum = document.createElement('div'); sum.className = 'ac-summary';
+  const r = prep.result;
+  sum.innerHTML = r
+    ? `<b>${r.did?.length || 0}</b> decisions · <b>${r.cuts}</b> cuts · <b>${r.frames}</b> framing moves`
+      + `<br><span class="dim">${r.words} words · ${r.stillOnTheTable} doubtful cuts left for you to judge</span>`
+    : 'Transcribes, finds the cuts, works out when you should have the frame instead of the screen, '
+      + 'applies the pack’s look and sizes the panels to what they say. Nothing is rendered.';
+  wrap.appendChild(sum);
+
+  if (r?.did?.length) {
+    const list = document.createElement('div'); list.className = 'ac-list';
+    r.did.forEach((line) => {
+      const row = document.createElement('div'); row.className = 'ac-item';
+      const t = document.createElement('span'); t.className = 't'; t.textContent = '✓';
+      const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = line;
+      row.append(t, lbl); list.appendChild(row);
+    });
+    wrap.appendChild(list);
+  } else if (prep.log.length) {
+    const list = document.createElement('div'); list.className = 'ac-list';
+    prep.log.slice(-6).forEach((line) => {
+      const row = document.createElement('div'); row.className = 'ac-item';
+      const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = line;
+      row.appendChild(lbl); list.appendChild(row);
+    });
+    wrap.appendChild(list);
+  }
+
+  if (!prep.busy) {
+    wrap.appendChild(btnRow(
+      btn(r ? 'Run it again' : 'Prepare my edit', () => runPrepare(), 'primary'),
+      btn('Review the doubtful cuts', () => runAutoCut()),
+      btn('Hand it to Claude', () => startAgentEdit()),
+    ));
+  }
+  wrap.appendChild(hint('This is the structural pass. The next one — motion graphics, music, the '
+    + 'final grade — is the agent’s, and it reads every decision made here from project.json.'));
+  box.appendChild(wrap);
 }
 
 // ---------------------------------------------------------------- auto-cut

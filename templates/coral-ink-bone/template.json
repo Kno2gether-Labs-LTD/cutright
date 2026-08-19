@@ -8,7 +8,11 @@
   "engine": "hyperframes",
   "sceneEngine": "pillow",
   "tokens": {
-    "coral": "#E5533D", "ink": "#1A1A18", "bone": "#F1EFE7", "lime": "#C4D82E", "sky": "#6FB7E8",
+    "coral": "#E5533D",
+    "ink": "#1A1A18",
+    "bone": "#F1EFE7",
+    "lime": "#C4D82E",
+    "sky": "#6FB7E8",
     "displayFont": "Bodoni 72, Didot, Georgia, serif",
     "uiFont": "Arial Rounded MT Bold, Arial Rounded Bold, Arial, sans-serif"
   },
@@ -18,7 +22,13 @@
     "color": "#FFFFFF",
     "highlight": "#E5533D"
   },
-  "scenes": ["pills", "checklist", "counter", "stat", "strike"],
+  "scenes": [
+    "pills",
+    "checklist",
+    "counter",
+    "stat",
+    "strike"
+  ],
   "overlays": [
     {
       "id": "lower-third",
@@ -26,9 +36,21 @@
       "composition": "overlays/lower-third.html",
       "duration": 4,
       "vars": [
-        { "name": "tag", "label": "Tag", "default": "SELF-HOSTED" },
-        { "name": "title", "label": "Title", "default": "YOUR OWN RELAY SERVER" },
-        { "name": "sub", "label": "Subtitle", "default": "RUNS ON YOUR VPS" }
+        {
+          "name": "tag",
+          "label": "Tag",
+          "default": "SELF-HOSTED"
+        },
+        {
+          "name": "title",
+          "label": "Title",
+          "default": "YOUR OWN RELAY SERVER"
+        },
+        {
+          "name": "sub",
+          "label": "Subtitle",
+          "default": "RUNS ON YOUR VPS"
+        }
       ]
     },
     {
@@ -37,8 +59,16 @@
       "composition": "overlays/title-card.html",
       "duration": 3.5,
       "vars": [
-        { "name": "kicker", "label": "Kicker", "default": "CHAPTER 01" },
-        { "name": "title", "label": "Title", "default": "Set up the relay" }
+        {
+          "name": "kicker",
+          "label": "Kicker",
+          "default": "CHAPTER 01"
+        },
+        {
+          "name": "title",
+          "label": "Title",
+          "default": "Set up the relay"
+        }
       ]
     },
     {
@@ -47,9 +77,47 @@
       "composition": "overlays/callout.html",
       "duration": 2.5,
       "vars": [
-        { "name": "text", "label": "Text", "default": "ONE CLICK" },
-        { "name": "corner", "label": "Corner (tl/tr/bl/br)", "default": "tr" }
+        {
+          "name": "text",
+          "label": "Text",
+          "default": "ONE CLICK"
+        },
+        {
+          "name": "corner",
+          "label": "Corner (tl/tr/bl/br)",
+          "default": "tr"
+        }
       ]
     }
-  ]
+  ],
+  "pacing": {
+    "minPanel": 2.6,
+    "maxPanel": 8.0,
+    "wordsPerSecond": 2.1,
+    "followSpeech": true,
+    "slide": 0.55,
+    "note": "editorial pace \u2014 a beat longer, the panels carry more text"
+  },
+  "grade": {
+    "look": "film",
+    "grain": 12,
+    "vignette": 0.18,
+    "audioPolish": "voice"
+  },
+  "framing": {
+    "panel": {
+      "to": "card"
+    },
+    "corner": {
+      "to": "corner",
+      "shape": "circle",
+      "size": 0.26,
+      "corner": "br",
+      "margin": 0.045,
+      "backdrop": "brand"
+    },
+    "backdropBase": "#1A1A18",
+    "backdropGlow": "#E5533D",
+    "backdropGlow2": "#6FB7E8"
+  }
 }

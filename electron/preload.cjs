@@ -146,6 +146,15 @@ contextBridge.exposeInMainWorld('editor', {
     setKey: (provider, value) => ipcRenderer.invoke('keys:set', { provider: str(provider), value: str(value) }),
     onEvent: on(sttListeners),
   },
+  // the structural pass — see prepare-worker.cjs
+  prepare: {
+    start: (opts) => ipcRenderer.invoke('prepare:start', opts),
+    onEvent: (fn) => {
+      const onPort = (e) => { const p = e.ports[0]; p.onmessage = (m) => fn(m.data); p.start(); };
+      ipcRenderer.on('prepare:port', onPort);
+      return () => ipcRenderer.removeListener('prepare:port', onPort);
+    },
+  },
   autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
     noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,

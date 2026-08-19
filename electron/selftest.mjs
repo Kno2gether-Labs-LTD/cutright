@@ -1275,6 +1275,77 @@ export async function runEditTests({ win, settings, app }) {
     return r;
   });
 
+
+  // ---------------------------------------------------------------- preprocess
+  await test('prepare: one action transcribes, cuts, frames and applies the pack', async () => {
+    const before = disk();
+    const r = await js(`(async () => {
+      const events = [];
+      const off = window.editor.prepare.onEvent(e => events.push(e));
+      const started = await window.editor.prepare.start({ template: 'coral-ink-bone',
+        options: { transcribe: false } });
+      if (started?.error) { off(); return { error: started.error }; }
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+        }, 300);
+        setTimeout(() => { clearInterval(iv); res({ type: 'timeout' }); }, 240000);
+      });
+      off();
+      return { done, stages: [...new Set(events.filter(e => e.type === 'progress').map(e => e.stage))] };
+    })()`, true);
+    expect(!r.error, 'prepare refused to start: ' + r.error);
+    expect(r.done?.type === 'done', 'prepare did not finish: ' + JSON.stringify(r.done).slice(0, 200));
+    expect(r.stages.includes('cuts'), 'prepare never looked for cuts: ' + r.stages.join(','));
+
+    await settle();
+    const after = disk();
+    // it must show its working — a decision with no reason is not reviewable
+    expect(Array.isArray(r.done.did), 'prepare reported no decisions');
+    expect(after.meta?.preparedAt, 'prepare did not record that it ran');
+    expect(after.grade?.look?.preset, 'the pack’s grade was not applied');
+    expect(after.audio?.polish, 'the pack’s audio polish was not applied');
+    // and it must never quietly bin the doubtful ones
+    expect(after.proposals, 'prepare kept no record of what it did not do');
+    return { did: r.done.did, cuts: r.done.cuts, stages: r.stages };
+  });
+
+  await test('prepare: panels are sized to what they say, with the reason recorded', async () => {
+    const p = disk();
+    p.scenes = [
+      { id: 'short', type: 'pills', start: at(0.15), dur: 9, headline: 'WHY', items: [{ text: 'ONE' }] },
+      { id: 'wordy', type: 'pills', start: at(0.55), dur: 1,
+        headline: 'THE THREE REASONS THIS MATTERS MORE THAN YOU MIGHT THINK',
+        items: [{ text: 'PRIVACY BY DEFAULT' }, { text: 'CONTROL OF YOUR OWN DATA' }, { text: 'COST OVER TIME' }] },
+    ];
+    await writeProject(p);
+
+    const r = await js(`(async () => {
+      const events = [];
+      const off = window.editor.prepare.onEvent(e => events.push(e));
+      await window.editor.prepare.start({ options: { transcribe: false, cuts: false } });
+      const done = await new Promise(res => {
+        const iv = setInterval(() => {
+          const d = events.find(e => e.type === 'done' || e.type === 'error');
+          if (d) { clearInterval(iv); res(d); }
+        }, 300);
+        setTimeout(() => { clearInterval(iv); res({ type: 'timeout' }); }, 120000);
+      });
+      off(); return done;
+    })()`, true);
+    expect(r?.type === 'done', 'prepare did not finish: ' + JSON.stringify(r).slice(0, 160));
+
+    await settle();
+    const scenes = disk().scenes;
+    const short = scenes.find((s) => s.id === 'short'), wordy = scenes.find((s) => s.id === 'wordy');
+    expect(short.durWhy && wordy.durWhy, 'no reason was recorded for the durations chosen');
+    expect(wordy.dur > short.dur,
+      `a panel with four times the text is not on screen longer (${wordy.dur}s vs ${short.dur}s)`);
+    expect(short.dur < 9, `a three-word panel kept its arbitrary 9s (${short.dur}s)`);
+    return { short: [short.dur, short.durWhy], wordy: [wordy.dur, wordy.durWhy] };
+  });
+
   // ---------------------------------------------------------------- security
   await test('security: cve:// refuses a path outside the workspace', async () => {
     const r = await js(`(async () => {

@@ -69,6 +69,18 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       overlays,
       transitions: ['crossfade', 'dip', 'dipwhite', 'whip', 'wiperight', 'circle', 'smooth', 'pixel'],
 
+      // Two video tracks, when the project came from a recording with a camera.
+      tracks: {
+        note: 'meta.tracks tells you whether this project has a separate camera. When it does, the '
+            + 'SCREEN is the picture underneath and the CAMERA is what framing moves — so "to":"full" '
+            + 'means the speaker fills the frame and the screen is hidden behind them.',
+        useIt: 'Give the speaker the frame when the screen has nothing to say — an idea being '
+             + 'explained rather than demonstrated — and hand it back when they start doing things '
+             + 'again. The preprocess pass has already proposed these from measured screen activity; '
+             + 'they are the frames[] entries with "source":"screen-static", and its reason is in '
+             + '"why". Move them, drop them, add your own.',
+      },
+
       // Where the picture sits in the frame, and what shape it is. This is what turns a
       // talking head into a presenter beside their own slide.
       framing: {
@@ -111,6 +123,16 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       looks: ['none', 'film', 'warm', 'cool', 'teal-orange', 'bleach', 'noir', 'vhs'],
       audioPolish: ['none', 'voice', 'warm', 'podcast'],
 
+      // How long a panel stays up is a consequence, not a setting.
+      pacing: {
+        note: 'A scene is up for as long as what it says is worth reading and the speaker is still '
+            + 'on the subject: max(reading time, the transcript run from its start), held inside the '
+            + "pack's minPanel..maxPanel. The preprocess pass sets scenes[].dur this way and records "
+            + 'why in scenes[].durWhy.',
+        rules: 'engine/pacing.py — the app and you use the same numbers',
+        ifYouChangeIt: 'set dur yourself and delete durWhy, so nobody later thinks the pass chose it',
+      },
+
       // Generation is listed, never performed, here. Anything added later — an MCP server,
       // an image or video generation API — appends an entry in this shape: what it makes,
       // whether it is configured, and the exact way to call it.
@@ -132,6 +154,16 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       export: `python3 "${enginePath}/render_project.py" --project project.json --out FINAL.mp4`,
       transcribe: 'npx hyperframes transcribe <audio-or-video> --json -d .',
       sfx: `python3 "${enginePath}/audio_agent.py" sfx --prompt "<sound>" --at <seconds> --dur 2 --project project.json`,
+    },
+
+    // The work happens in two passes, and this brief is written between them.
+    passes: {
+      one: 'structural — transcribe, cut, decide who has the frame, apply the pack, size the panels. '
+         + 'Already done: it is what wrote the cuts, frames and durations you are reading.',
+      two: 'craft — yours. Fix the captions, write the scenes, render and place motion graphics, add '
+         + 'music and sound, set the final grade. Then check a range preview before you say it is done.',
+      why: 'pass one is cheap and re-runnable, pass two is expensive. A wrong structural call is a '
+         + 'JSON edit, not a re-render.',
     },
 
     // What the app has already settled vs what is left for the agent. The user picks the

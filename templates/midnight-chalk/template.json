@@ -4,11 +4,15 @@
   "version": "1.0.0",
   "author": "Cutright",
   "license": "Apache-2.0",
-  "description": "Dark chalkboard aesthetic — hand-drawn rules, chalk-white type, amber accents. Good for tutorials and code.",
+  "description": "Dark chalkboard aesthetic \u2014 hand-drawn rules, chalk-white type, amber accents. Good for tutorials and code.",
   "engine": "hyperframes",
   "sceneEngine": "pillow",
   "tokens": {
-    "chalk": "#F3EFE6", "board": "#12161A", "amber": "#F2B441", "mint": "#6FD3A8", "rose": "#F2789A",
+    "chalk": "#F3EFE6",
+    "board": "#12161A",
+    "amber": "#F2B441",
+    "mint": "#6FD3A8",
+    "rose": "#F2789A",
     "displayFont": "Georgia, 'Times New Roman', serif",
     "uiFont": "'SF Mono', ui-monospace, Menlo, monospace"
   },
@@ -18,7 +22,13 @@
     "color": "#F3EFE6",
     "highlight": "#F2B441"
   },
-  "scenes": ["pills", "checklist", "counter", "stat", "strike"],
+  "scenes": [
+    "pills",
+    "checklist",
+    "counter",
+    "stat",
+    "strike"
+  ],
   "overlays": [
     {
       "id": "chalk-lower-third",
@@ -26,8 +36,16 @@
       "composition": "overlays/lower-third.html",
       "duration": 4,
       "vars": [
-        { "name": "title", "label": "Title", "default": "THE RELAY SERVER" },
-        { "name": "sub", "label": "Subtitle", "default": "self-hosted, one click" }
+        {
+          "name": "title",
+          "label": "Title",
+          "default": "THE RELAY SERVER"
+        },
+        {
+          "name": "sub",
+          "label": "Subtitle",
+          "default": "self-hosted, one click"
+        }
       ]
     },
     {
@@ -36,9 +54,47 @@
       "composition": "overlays/note.html",
       "duration": 3,
       "vars": [
-        { "name": "text", "label": "Note", "default": "keep your data" },
-        { "name": "side", "label": "Side (left/right)", "default": "right" }
+        {
+          "name": "text",
+          "label": "Note",
+          "default": "keep your data"
+        },
+        {
+          "name": "side",
+          "label": "Side (left/right)",
+          "default": "right"
+        }
       ]
     }
-  ]
+  ],
+  "pacing": {
+    "minPanel": 2.2,
+    "maxPanel": 6.5,
+    "wordsPerSecond": 2.4,
+    "followSpeech": true,
+    "slide": 0.5,
+    "note": "tutorial pace \u2014 panels earn their place and get out"
+  },
+  "grade": {
+    "look": "cool",
+    "grain": 6,
+    "vignette": 0.1,
+    "audioPolish": "voice"
+  },
+  "framing": {
+    "panel": {
+      "to": "card"
+    },
+    "corner": {
+      "to": "corner",
+      "shape": "circle",
+      "size": 0.26,
+      "corner": "br",
+      "margin": 0.045,
+      "backdrop": "brand"
+    },
+    "backdropBase": "#12161A",
+    "backdropGlow": "#F2B441",
+    "backdropGlow2": "#6FD3A8"
+  }
 }

@@ -20,9 +20,9 @@ const SOFT_FILLERS = new Set(['like', 'basically', 'actually', 'literally', 'rig
 
 process.parentPort.on('message', async (e) => {
   const msg = e.data;
-  if (msg?.type !== 'analyze') return;
+  if (msg?.type !== 'analyze' && msg?.type !== 'screen') return;
   try {
-    const result = await analyze(msg.job);
+    const result = msg.type === 'screen' ? await analyzeScreen(msg.job) : await analyze(msg.job);
     process.parentPort.postMessage({ type: 'result', ...result });
   } catch (err) {
     process.parentPort.postMessage({ type: 'error', error: err?.message || String(err) });
@@ -172,3 +172,84 @@ async function analyze(job) {
 }
 
 const round = (n) => Math.round(n * 100) / 100;
+
+
+// ---------------------------------------------------------------- screen activity
+// When a screen recording stops changing — the presenter is talking through an idea, not
+// demonstrating anything — the screen is the least interesting thing on it. Those stretches are
+// where the speaker should have the frame.
+//
+// Measured, not guessed: consecutive frames are differenced (tblend) and the mean brightness of
+// that difference is the activity score. A cursor drifting registers near zero; typing, scrolling
+// and window changes do not. Sampled at 4 fps, which is enough to see a paragraph of typing and
+// cheap enough to run on a half-hour recording.
+async function analyzeScreen(job) {
+  const {
+    media, work,
+    fps = 4,
+    quietScore = 1.2,      // mean frame-to-frame difference below this is "nothing is happening"
+    minQuiet = 6,          // shorter than this and cutting to the speaker is just a twitch
+    maxQuiet = 45,         // longer than this and the speaker outstays their welcome too
+    lead = 0.6,            // let the screen settle before leaving it
+  } = job;
+
+  const src = media.startsWith('/') ? media : join(work, media);
+  if (!existsSync(src)) throw new Error('no screen recording at ' + src);
+
+  const scores = [];
+  await run('ffmpeg', ['-hide_banner', '-nostats', '-i', src,
+    '-vf', `fps=${fps},scale=320:-2,tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG`,
+    '-an', '-f', 'null', '-'], (line) => {
+    const m = /lavfi\.signalstats\.YAVG=([0-9.]+)/.exec(line);
+    if (m) scores.push(+m[1]);
+  });
+  if (!scores.length) throw new Error('could not measure the screen (no frames analysed)');
+
+  // a word-level transcript tells us whether anyone is actually talking through the quiet bit
+  let words = [];
+  try { words = JSON.parse(readFileSync(join(work, 'transcript.json'), 'utf8')); } catch {}
+  const talking = (from, to) => {
+    if (!words.length) return true;                      // no transcript: do not veto anything
+    const spoken = words.filter((w) => +w.end > from && +w.start < to)
+      .reduce((a, w) => a + Math.min(to, +w.end) - Math.max(from, +w.start), 0);
+    return spoken > (to - from) * 0.45;                  // mostly talking, not mostly silence
+  };
+
+  const t = (i) => i / fps;
+  const windows = [];
+  let run0 = null;
+  scores.forEach((v, i) => {
+    if (v < quietScore) { if (run0 === null) run0 = i; return; }
+    if (run0 !== null) { windows.push([t(run0), t(i)]); run0 = null; }
+  });
+  if (run0 !== null) windows.push([t(run0), t(scores.length)]);
+
+  const proposals = [];
+  for (const [s0, e0] of windows) {
+    const start = s0 + lead, end = Math.min(e0 - lead * 0.5, s0 + lead + maxQuiet);
+    if (end - start < minQuiet) continue;
+    if (!talking(start, end)) continue;                  // silence that auto-cut will remove anyway
+    const inWindow = scores.slice(Math.round(s0 * fps), Math.round(e0 * fps));
+    proposals.push({
+      start: round(start), end: round(end),
+      reason: 'screen-static',
+      confidence: end - start > minQuiet * 2 ? 'high' : 'medium',
+      label: `nothing changing on screen for ${(e0 - s0).toFixed(0)}s`,
+      activity: round(inWindow.reduce((a, b) => a + b, 0) / Math.max(1, inWindow.length)),
+    });
+  }
+
+  const busy = scores.filter((v) => v >= quietScore).length / scores.length;
+  return {
+    proposals,
+    stats: {
+      sampled: scores.length, seconds: round(scores.length / fps),
+      busyFraction: round(busy), quietWindows: windows.length,
+      words: words.length,
+    },
+  };
+}
+
+// Also required directly by the preprocess pass, which runs the same analyses in order without
+// a round trip through the UI. Harmless when this file is forked as a worker.
+module.exports = { analyze, analyzeScreen };

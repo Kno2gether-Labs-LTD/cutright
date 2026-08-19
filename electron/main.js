@@ -523,6 +523,16 @@ function registerRecordingIpc() {
           let words = [];
           try { words = JSON.parse(readFileSync(join(rec.dir, 'transcript.json'), 'utf8')); } catch {}
 
+          // The camera is a TRACK, not an attachment: the render composites it over the screen,
+          // which is what lets the speaker take the whole frame when the screen has nothing to
+          // say. Without this the camera file is just something sitting in a folder.
+          if (existsSync(rec.file('camera'))) {
+            project.meta = { ...project.meta, tracks: {
+              screen: project.meta?.graded || 'graded_master.mp4',
+              camera: 'recording/camera.mp4',
+              cameraHome: { to: 'corner', shape: 'circle', size: 0.24, corner: 'br', margin: 0.045 },
+            } };
+          }
           project.recording = {
             startedAt: new Date(rec.startedAt).toISOString(),
             screen: 'recording/screen.mp4',
@@ -555,6 +565,29 @@ function registerRecordingIpc() {
       language: '', gradeRef: '', targetHeight: 1080, targetFps: 30,
     } });
     return { ok: true, dir: rec.dir };
+  });
+
+  // Preprocess: one action that does the structural pass — transcribe, cut, decide who has the
+  // frame, apply the pack, size the panels — and writes it all into project.json.
+  ipcMain.handle('prepare:start', (e, opts = {}) => {
+    if (!settings.work) return { error: 'no project open' };
+    const child = utilityProcess.fork(join(__dir, 'prepare-worker.cjs'), [], {
+      serviceName: 'cve-prepare', stdio: 'pipe',
+      env: { ...process.env, CVE_ENGINE: settings.engine },
+    });
+    const id = 'prep' + Date.now();
+    const { port1, port2 } = new MessageChannelMain();
+    child.postMessage({ type: 'port' }, [port1]);
+    e.sender.postMessage('prepare:port', { id }, [port2]);
+    child.stderr?.on('data', (d) => log('[prepare!]', d.toString().trim().slice(0, 300)));
+
+    const tpl = opts.template ? listTemplates().find((t) => t.id === opts.template) : null;
+    child.postMessage({ type: 'prepare', job: {
+      work: settings.work, template: tpl || null, options: opts.options || {},
+    } });
+    // the brief is rewritten once the pass lands, so the agent reads the decisions it just made
+    child.on('exit', () => { try { refreshAgentBrief(); } catch {} });
+    return { id };
   });
 
   ipcMain.handle('rec:privacy', () => {

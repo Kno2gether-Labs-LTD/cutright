@@ -92,6 +92,15 @@ def main():
     LOOK=look_chain()
 
     # ---------- 0. CUTS → working video + remap (full render only) ----------
+    # A recording keeps the screen and the camera as SEPARATE files. The screen is the master;
+    # the camera is composited on top by the framing stage, which is what lets the speaker be a
+    # corner circle over the screen one moment and fill the frame the next. Both were started
+    # together, so their clocks agree — but only if the camera lives through the same cuts.
+    tracks=(P.get("meta",{}) or {}).get("tracks") or {}
+    camera=tracks.get("camera")
+    if camera and not os.path.isabs(camera): camera=os.path.join(os.path.dirname(os.path.abspath(a.project)),camera)
+    if camera and not os.path.exists(camera): camera=None
+
     cuts=P.get("cuts",[]) if not a.range else []
     remap=lambda t:t; in_cut=lambda t:False; workDur=DUR; src=graded
     if cuts:
@@ -109,12 +118,19 @@ def main():
             if tname in ("","none","hard"): continue
             xf_by_pair[(max(0.0,float(c["start"])),min(DUR,float(c["end"])))]=float(c.get("tdur",0.3))
         remap,in_cut=make_remap(cutpairs,xf_by_pair)
-        parts=[]
+        parts=[]; cam_parts=[]
         for i,(s0,e0) in enumerate(segs):
             seg=os.path.join(T,f"seg_{i:03d}.mp4")
             run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",graded,*HW,
                  "-r",str(FPS),"-c:a","aac","-b:a","192k","-ar","48000","-ac","2",seg],log=os.path.join(T,f"seg_{i}.log"))
             parts.append(seg)
+            if camera:
+                # the same seconds removed from the camera, or the speaker drifts out of sync
+                # with their own voice from the first cut onwards
+                cseg=os.path.join(T,f"cam_{i:03d}.mp4")
+                run(["ffmpeg","-hide_banner","-y","-ss",str(s0),"-to",str(e0),"-i",camera,*HW,
+                     "-r",str(FPS),"-an",cseg],log=os.path.join(T,f"cam_seg_{i}.log"))
+                cam_parts.append(cseg)
         src=os.path.join(T,"graded_cut.mp4")
         seam_x=[]   # transition duration + ffmpeg name for the seam after segment i
         for i in range(len(segs)-1):
@@ -154,6 +170,16 @@ def main():
             lst=os.path.join(T,"segs.txt"); open(lst,"w").write("".join(f"file '{p}'\n" for p in parts))
             run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",lst,"-c","copy","-movflags","+faststart",src],log=os.path.join(T,"cut_concat.log"))
             workDur=sum(e-s for s,e in segs)
+
+        if camera and cam_parts:
+            # The camera gets the cuts but never the transitions: it is composited on top, so a
+            # crossfade on the picture underneath is the transition. Straight concat keeps it in
+            # step with the audio, which is what matters.
+            cl=os.path.join(T,"cam_segs.txt"); open(cl,"w").write("".join(f"file '{p}'\n" for p in cam_parts))
+            camcut=os.path.join(T,"camera_cut.mp4")
+            run(["ffmpeg","-hide_banner","-y","-f","concat","-safe","0","-i",cl,"-c","copy",
+                 "-movflags","+faststart",camcut],log=os.path.join(T,"cam_concat.log"))
+            camera=camcut
 
     A,B=(a.range if a.range else [0.0,workDur]); span=B-A
     # A and B stay on the ORIGINAL timeline for the whole render, because every element's times
@@ -240,13 +266,43 @@ def main():
         if ns>=B: continue
         frames.append({**f,"_ns":max(0.0,ns-A),"_dur":max(0.05,fd)})
     frames.sort(key=lambda f: f["_ns"])
+    # A camera track always needs the framing pass, even with no moves in the project: without it
+    # the speaker is a file nobody composited and the recording was pointless.
+    if camera and not frames:
+        frames=[{"id":"_camera_default","start":0.0,"dur":0.05,"to":"corner","shape":"circle",
+                 "size":0.24,"corner":"br","margin":0.045,"_ns":0.0,"_dur":0.05,"_implicit":True}]
     if frames:
         sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
         import frames_png as FP
         fdir=os.path.join(T,"frames"); os.makedirs(fdir,exist_ok=True)
 
+        # What is being MOVED and what it sits ON.
+        #
+        #   a recording with a camera : the camera moves, the screen is what it sits on. "Full
+        #                               frame" then means the speaker fills the screen — which is
+        #                               exactly what you want when nothing on the desktop matters.
+        #   anything else             : the picture itself moves, over a backdrop.
+        #
+        # One machinery, two readings, because a camera in a corner and a talking head shrinking
+        # onto a brand wash are the same animation.
+        picture=camera or src
+        pict_ar=VW/float(VH)
+        if camera:
+            pr=subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries",
+                               "stream=width,height","-of","csv=p=0",camera],capture_output=True,text=True)
+            try:
+                cwv,chv=[int(x) for x in pr.stdout.strip().split(",")[:2]]
+                if chv: pict_ar=cwv/float(chv)
+            except Exception: pass
+
         # --- the picture's geometry over time: a chain of holds, latest wins
+        # Where the picture starts. A camera starts where a camera belongs — small, in a corner —
+        # and NOT wherever the first move happens to go, or a project whose first instruction is
+        # "go full at 0:10" would have the speaker filling the screen for the ten seconds before it.
         start_state={"to":"full"}
+        if camera:
+            start_state=dict((P.get("meta",{}).get("tracks") or {}).get("cameraHome")
+                             or {"to":"corner","shape":"circle","size":0.24,"corner":"br","margin":0.045})
         states=[start_state]+[f for f in frames]
         def geom(st): return FP.state_geometry(st,VW,VH)
         def ease_expr(f):
@@ -265,7 +321,7 @@ def main():
                 prev=tgt
             return expr
         ph=track("ph"); cx=track("cx"); cy=track("cy")
-        pw=f"({ph})*{VW}/{VH}"
+        pw=f"({ph})*{pict_ar:.6f}"
 
         # --- the mask: drawn frames for each move, stills for the holds, concatenated
         segs=[]; prev=start_state; cursor=0.0
@@ -299,7 +355,11 @@ def main():
         explicit=[f for f in frames if not f.get("_implicit") and f.get("to")!="full"]
         bd=str((explicit[0] if explicit else {}).get("backdrop","blur" if not explicit else "brand"))
         vin_f=vin_for(src)
-        if bd=="blur":
+        if camera:
+            # the screen recording IS the backdrop — that is the whole point of keeping them apart
+            bg_filter=f"[0:v]scale={VW}:{VH},fps={FPS}[bg];"
+            bg_inputs=[]
+        elif bd=="blur":
             bg_filter=f"[0:v]scale={VW//4}:{VH//4},boxblur=12:2,scale={VW}:{VH},eq=brightness=-0.12[bg];"
             bg_inputs=[]
         else:
@@ -316,12 +376,16 @@ def main():
             bg_filter=f"[3:v]scale={VW}:{VH},fps={FPS}[bg];"
 
         framed=os.path.join(T,"framed.mp4")
+        # With a camera the screen is the base and the camera is the moving picture, so the
+        # camera comes in as its own input; without one, input 0 is both.
+        cam_inputs=(["-i",camera] if camera else [])
+        pic_label="4:v" if (camera and bg_inputs) else ("3:v" if camera else "0:v")
         run(["ffmpeg","-hide_banner","-y",*vin_f,
              "-f","lavfi","-i",f"color=c=black@0.0:s={VW}x{VH}:r={FPS},format=rgba",
-             "-i",maskmov,*bg_inputs,
+             "-i",maskmov,*bg_inputs,*cam_inputs,
              "-filter_complex",
              (bg_filter
-              +f"[0:v]scale=w='{pw}':h='{ph}':eval=frame[pic];"
+              +f"[{pic_label}]scale=w='{pw}':h='{ph}':eval=frame[pic];"
               +f"[1:v][pic]overlay=x='({cx})-w/2':y='({cy})-h/2':eval=frame:shortest=1,format=rgba[canvas];"
               +f"[canvas][2:v]alphamerge[shaped];"
               +f"[bg][shaped]overlay=0:0:shortest=1,format=yuv420p[v]"),
@@ -353,17 +417,17 @@ def main():
              "--font",d.get("font",DEFAULT_FONT),"--end",str(span)])
         run(["ffmpeg","-hide_banner","-y",*vin,"-f","concat","-safe","0","-i",os.path.join(capdir,"concat.txt"),
              "-filter_complex",f"{vpre}[1:v]fps={FPS},format=rgba,scale={VW}:{VH}[c];{vsrc}[c]overlay=0:0:eof_action=pass[v]",
-             "-map","[v]","-map","0:a",*HW,"-movflags","+faststart","-c:a","copy",base],log=os.path.join(T,"base.log"))
+             "-map","[v]","-map","0:a?",*HW,"-movflags","+faststart","-c:a","copy",base],log=os.path.join(T,"base.log"))
     else:
         # No captions in range — a screen recording being framed, say. Rendering a full clip of
         # transparent PNGs to composite nothing was both slow and a crash waiting to happen (it
         # needed a caption font the project had no reason to carry).
         if LOOK:
             run(["ffmpeg","-hide_banner","-y",*vin,"-filter_complex",f"{vpre}{vsrc}null[v]",
-                 "-map","[v]","-map","0:a",*HW,"-movflags","+faststart","-c:a","copy",base],
+                 "-map","[v]","-map","0:a?",*HW,"-movflags","+faststart","-c:a","copy",base],
                 log=os.path.join(T,"base.log"))
         else:
-            run(["ffmpeg","-hide_banner","-y",*vin,"-map","0:v","-map","0:a",*HW,
+            run(["ffmpeg","-hide_banner","-y",*vin,"-map","0:v","-map","0:a?",*HW,
                  "-movflags","+faststart","-c:a","copy",base],log=os.path.join(T,"base.log"))
 
     # ---------- 2. scenes (drop if straddles a cut; remap start) ----------
@@ -414,7 +478,7 @@ def main():
             fc.append(f"{prev}[{i+1}:v]overlay=0:0:eof_action=pass:enable='between(t,{st},{en})'{out}");prev=out
             # (an animated scene carries its own alpha fade, so the window stays the scene's own)
         cur=os.path.join(T,"withscenes.mp4")
-        args+=["-filter_complex",";".join(fc),"-map",prev,"-map","0:a",*HW,"-movflags","+faststart","-c:a","copy",cur]
+        args+=["-filter_complex",";".join(fc),"-map",prev,"-map","0:a?",*HW,"-movflags","+faststart","-c:a","copy",cur]
         run(args,log=os.path.join(T,"scenes_overlay.log"))
 
     # ---------- 2b. OVERLAYS (RGBA clips: HyperFrames MOV/WebM, PNG seq, any alpha video) ----------
@@ -442,7 +506,7 @@ def main():
             fc.append(f"{prev}[{i+1}:v]overlay={x}:{y}:eof_action=pass:enable='between(t,{st},{en})'{out}")
             prev=out
         nxt=os.path.join(T,"withoverlays.mp4")
-        args+=["-filter_complex",";".join(fc),"-map",prev,"-map","0:a",*HW,"-movflags","+faststart","-c:a","copy",nxt]
+        args+=["-filter_complex",";".join(fc),"-map",prev,"-map","0:a?",*HW,"-movflags","+faststart","-c:a","copy",nxt]
         run(args,log=os.path.join(T,"overlays.log"))
         cur=nxt
 
