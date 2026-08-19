@@ -16,6 +16,14 @@ async function boot() {
     warn.hidden = false;
     warn.textContent = `${missing.join(' and ')} permission is not granted yet. macOS will ask when you start — if it does not, enable it in System Settings → Privacy & Security.`;
   }
+  // Say this before they go and grant something, not after it quietly stops working.
+  if (perms.stableIdentity === false) {
+    const note = $('#signWarn');
+    note.hidden = false;
+    note.textContent = 'This build is not signed with a certificate, so macOS treats every update '
+      + 'as a different app — you will have to grant Screen Recording again after each one. '
+      + 'Building with a signing certificate fixes that.';
+  }
 
   const listed = await R.sources();
   sources = listed.sources || listed;               // tolerate the older flat shape

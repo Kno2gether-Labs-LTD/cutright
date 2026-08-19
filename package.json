@@ -29,7 +29,9 @@
     "check:verify": "node scripts/check-verify.mjs",
     "check:layers": "node scripts/check-layers.mjs",
     "check:audio": "node scripts/check-audio.mjs",
-    "check:mcp": "node scripts/check-mcp.mjs"
+    "check:mcp": "node scripts/check-mcp.mjs",
+    "check:signing": "node scripts/check-signing.mjs",
+    "signing:local": "bash scripts/setup-signing.sh local"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -138,7 +140,8 @@
       "shortcutName": "Cutright"
     },
     "afterSign": "build/notarize.cjs",
-    "copyright": "Copyright © 2026 Avijit Sarkar (Viddescriptor)"
+    "copyright": "Copyright © 2026 Avijit Sarkar (Viddescriptor)",
+    "afterAllArtifactBuild": "build/staple-dmg.cjs"
   },
   "homepage": "https://viddescriptor.com"
 }

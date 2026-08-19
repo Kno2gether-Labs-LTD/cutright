@@ -427,6 +427,35 @@ function setRecorderCompact(on) {
   }
 }
 
+// Will a permission the user grants today still be recognised after the next update?
+//
+// macOS decides whether an app is "the same app" by matching it against its designated
+// requirement. A build signed ad-hoc has the requirement `cdhash H"..."` — a hash of the build
+// itself — so every rebuild is a stranger and the Screen Recording tick stops applying to it. A
+// build signed with a certificate gets `identifier "..." and certificate ...`, which survives.
+//
+// Only the TCC permissions, to be clear. Saved API keys are not affected: safeStorage's keychain
+// item has no restrictive ACL, and an ad-hoc build was measured reading what a signed build wrote.
+//
+// Worth telling the user before they go and grant something, rather than after it silently
+// stops working. Read once and cached: it cannot change while the app is running.
+let stableIdentity = null;
+function hasStableIdentity() {
+  if (process.platform !== 'darwin') return true;      // only macOS keys grants to the signature
+  if (!app.isPackaged) return true;                    // a dev run is not what gets granted
+  if (stableIdentity !== null) return stableIdentity;
+  try {
+    const bundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
+    const r = require('node:child_process').spawnSync(
+      'codesign', ['-d', '-r-', bundle], { encoding: 'utf8', timeout: 5000 });
+    const out = (r.stdout || '') + (r.stderr || '');
+    const line = out.split('\n').find((l) => l.includes('designated =>'));
+    // No answer at all is not evidence of a problem — do not cry wolf.
+    stableIdentity = line ? !line.includes('cdhash') : true;
+  } catch { stableIdentity = true; }
+  return stableIdentity;
+}
+
 function registerRecordingIpc() {
   ipcMain.handle('rec:sources', async () => {
     const srcs = await desktopCapturer.getSources({
@@ -447,6 +476,7 @@ function registerRecordingIpc() {
     screen: systemPreferences.getMediaAccessStatus('screen'),
     microphone: systemPreferences.getMediaAccessStatus('microphone'),
     camera: systemPreferences.getMediaAccessStatus('camera'),
+    stableIdentity: hasStableIdentity(),
   }));
   ipcMain.handle('rec:request', async (_e, kind) => {
     try { return { ok: await systemPreferences.askForMediaAccess(kind) }; }

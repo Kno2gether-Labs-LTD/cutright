@@ -1,6 +1,7 @@
 #!/bin/bash
 # Cutright — macOS code-signing setup.
 #
+#   ./scripts/setup-signing.sh local    # 0. a stable identity for LOCAL builds (no Apple account)
 #   ./scripts/setup-signing.sh csr      # 1. make a signing request (run this first)
 #   …upload it at developer.apple.com, download the .cer…
 #   ./scripts/setup-signing.sh import ~/Downloads/developerID_application.cer
@@ -13,6 +14,9 @@ set -euo pipefail
 DIR="$HOME/.cutright-signing"
 KEY="$DIR/developer_id.key"
 CSR="$DIR/developer_id.certSigningRequest"
+LOCAL_KEY="$DIR/local_signing.key"
+LOCAL_CRT="$DIR/local_signing.crt"
+LOCAL_CN="Cutright Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 # Edit these two if the certificate should be issued to a different identity.
@@ -23,6 +27,80 @@ COUNTRY="${SIGN_COUNTRY:-GB}"
 cmd="${1:-help}"
 
 case "$cmd" in
+local)
+  # A self-signed code-signing certificate, used to sign every local build.
+  #
+  # Why this exists at all: without a certificate, electron-builder leaves an ad-hoc
+  # signature whose designated requirement is `cdhash H"..."` — a hash of the build itself.
+  # macOS therefore treats each rebuild as a DIFFERENT application, and Screen Recording has to
+  # be granted again after every build. Signing with a certificate that stays the same makes the
+  # requirement `identifier "..." and certificate root H"..."`, which survives rebuilds.
+  #
+  # It does NOT fix saved API keys — that was measured, and safeStorage's keychain item has no
+  # restrictive ACL, so identity never gated it. See scripts/afterpack-sign.cjs.
+  #
+  # This is NOT for distribution — other Macs still get a Gatekeeper warning. It only
+  # makes the app usable on the machine that builds it. Distribution needs the
+  # Developer ID path below (csr → import → npm run dist:signed).
+  mkdir -p "$DIR" && chmod 700 "$DIR"
+  if [ -f "$LOCAL_CRT" ] && [ -f "$LOCAL_KEY" ]; then
+    echo "Reusing the existing local certificate — its stability is the entire point."
+    echo "  $LOCAL_CRT"
+  else
+    CNF="$(mktemp)"
+    cat > "$CNF" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions    = v3
+prompt             = no
+[dn]
+CN = $LOCAL_CN
+O  = Viddescriptor
+C  = $COUNTRY
+[v3]
+basicConstraints     = critical,CA:false
+keyUsage             = critical,digitalSignature
+extendedKeyUsage     = critical,codeSigning
+subjectKeyIdentifier = hash
+EOF
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+      -keyout "$LOCAL_KEY" -out "$LOCAL_CRT" -config "$CNF" 2>/dev/null
+    rm -f "$CNF"
+    chmod 600 "$LOCAL_KEY"
+    echo "Created a 10-year self-signed code-signing certificate:"
+    echo "  $LOCAL_CRT"
+  fi
+
+  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LOCAL_CN"; then
+    echo "Already installed in the login keychain."
+  else
+    echo
+    echo "Installing it. macOS will ask you to allow this — that prompt is the point of"
+    echo "this step, so click Allow / Always Allow. You may be asked twice."
+    security import "$LOCAL_KEY" -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security 2>/dev/null || true
+    security import "$LOCAL_CRT" -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security 2>/dev/null || true
+    # trust it for code signing only — nothing else
+    security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" "$LOCAL_CRT" 2>/dev/null \
+      || security add-trusted-cert -r trustAsRoot -p codeSign -k "$KEYCHAIN" "$LOCAL_CRT" 2>/dev/null \
+      || echo "note: could not set trust non-interactively."
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN" >/dev/null 2>&1 || true
+  fi
+
+  echo
+  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LOCAL_CN"; then
+    security find-identity -v -p codesigning | grep "$LOCAL_CN"
+    echo
+    echo "✅ Local builds will now sign with a stable identity."
+    echo "   Rebuild (npm run dist), reinstall, and grant Screen Recording ONE more time."
+    echo "   After that the grant sticks across rebuilds."
+  else
+    echo "❌ The certificate is not usable for code signing yet."
+    echo "   Open Keychain Access → login → Certificates → \"$LOCAL_CN\","
+    echo "   Get Info → Trust → Code Signing: Always Trust."
+    exit 1
+  fi
+  ;;
+
 csr)
   mkdir -p "$DIR" && chmod 700 "$DIR"
   if [ -f "$KEY" ]; then
