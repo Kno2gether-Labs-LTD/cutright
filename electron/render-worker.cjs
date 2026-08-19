@@ -14,6 +14,19 @@ const STALL_WARN_MS = 90 * 1000;       // tell the UI we look stalled
 const HARD_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
 let port = null, child = null, job = null, tmpDir = null;
+
+// Keep the most recent few failed-render directories and drop the rest.
+function pruneRenderTmp(root, keep) {
+  try {
+    const dirs = readdirSync(root)
+      .map((n) => ({ n, p: join(root, n) }))
+      .map((d) => { try { return { ...d, t: statSync(d.p).mtimeMs }; } catch { return null; } })
+      .filter(Boolean)
+      .sort((a, b) => b.t - a.t);
+    for (const d of dirs.slice(keep)) { try { rmSync(d.p, { recursive: true, force: true }); } catch {} }
+  } catch { /* nothing to prune */ }
+}
+
 let lastActivity = Date.now(), warned = false, ticker = null, finished = false, cancelled = false;
 
 const post = (m) => { try { port?.postMessage(m); } catch {} };
@@ -117,6 +130,10 @@ function start(j) {
     try { result = JSON.parse(buf.trim().split('\n').pop()); } catch {}
     // keep the tmp dir only when it can still be useful: a genuine failure to debug
     if (code === 0 || cancelled) { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }
+    // A failed render keeps its working files, because they are the only way to find out why.
+    // Keeping ALL of them is how a project folder quietly fills up — each is a few hundred
+    // megabytes, and a preview now rebuilds whenever the edit settles.
+    else pruneRenderTmp(join(job.work, '.cve_render'), 3);
     done({ type: 'done', code, out: job.out, result, tail: buf.slice(-800) });
   });
 

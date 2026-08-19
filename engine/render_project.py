@@ -93,7 +93,12 @@ def main():
     P=json.load(open(a.project)); W=os.path.dirname(os.path.abspath(a.project))
     m=P["meta"]; VW,VH,FPS,DUR=m["width"],m["height"],m["fps"],m["duration"]
     graded=os.path.join(W,m["graded"])
+    # When --tmp is given the caller owns that directory and cleans it up. When it is not, this
+    # made one inside the project folder and left it there — a couple of hundred megabytes of
+    # intermediates per render, forever. The agent renders through this script directly, so that
+    # was every render it ever ran.
     T=a.tmp or tempfile.mkdtemp(prefix="rp_",dir=W); os.makedirs(T,exist_ok=True)
+    OWN_TMP=not a.tmp
     # A preview is watched once and thrown away; 14M would spend most of the render writing
     # bits nobody looks at, and leave >100MB intermediates behind for every rebuild.
     BR="3M" if a.preview else "14M"
@@ -732,8 +737,22 @@ def main():
                     "Timings are on the CUT timeline, so they line up as-is.\n")
 
     dur=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",a.out],capture_output=True,text=True).stdout.strip()
+    # Only on success. A failed render's working files are the only way to find out why, and
+    # the path is printed with the error so they can be found.
+    if OWN_TMP: shutil.rmtree(T,ignore_errors=True)
+
     print(json.dumps({"ok":True,"out":a.out,"duration":dur,"captions":len(cues),"scenes":len(scenes),"look":LOOK or None,
                       "cuts_applied":len(cuts),"range":[A,B] if a.range else None,
                       **({"layers":layers} if a.layers else {})}))
 
-if __name__=="__main__": main()
+if __name__=="__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # Say where the working files are before falling over, since that is what a diagnosis
+        # needs and the success path deletes them.
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
