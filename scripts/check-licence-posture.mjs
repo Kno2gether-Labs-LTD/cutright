@@ -35,7 +35,18 @@ const walk = (dir) => {
 };
 SEARCH.forEach((d) => walk(join(ROOT, d)));
 
-// 3. the licence must still be Apache-2.0 with a NOTICE
+// 3. no stray duplicates at the repo root — an extracted or copied source file committed
+//    by a careless `git add -A` (this has happened: an asar-extracted main.js).
+const { createHash } = await import('node:crypto');
+const hash = (p) => createHash('sha1').update(readFileSync(p)).digest('hex');
+const KNOWN_ROOT_JS = new Set([]);
+for (const entry of readdirSync(ROOT, { withFileTypes: true })) {
+  if (!entry.isFile() || !/\.(js|cjs|mjs)$/.test(entry.name)) continue;
+  if (KNOWN_ROOT_JS.has(entry.name)) continue;
+  problems.push(`${entry.name} sits at the repo root — source belongs in electron/, renderer/, scripts/ or engine/`);
+}
+
+// 4. the licence must still be Apache-2.0 with a NOTICE
 if (pkg.license !== 'Apache-2.0') problems.push(`package.json license is "${pkg.license}", expected Apache-2.0`);
 if (!existsSync(join(ROOT, 'LICENSE'))) problems.push('LICENSE is missing');
 if (!existsSync(join(ROOT, 'NOTICE'))) problems.push('NOTICE is missing');
