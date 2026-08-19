@@ -514,26 +514,70 @@ def main():
         cur=nxt
 
     # ---------- 3. audio layers ----------
+    # Music sits UNDER the voice, and a fixed gain is not how that is done: a bed that works in
+    # the gaps is too loud under a sentence, and one that works under a sentence is inaudible in
+    # the gaps. So each music layer is side-chained to the voice — it steps back while someone is
+    # talking and comes up when they stop. Effects are left alone; they are meant to land.
     au=P.get("audio",{}); music=au.get("music",[]); sfx=au.get("sfx",[]); lufs=au.get("loudnessLUFS",-14)
     if music or sfx:
-        inputs=["-i",cur]; parts=[]; idx=1; mix=["[0:a]"]
-        for layer in (music+sfx):
-            src2=layer["src"] if os.path.isabs(layer["src"]) else os.path.join(W,layer["src"])
-            if not os.path.exists(src2): continue
+        def resolve(layer):
+            sp=layer.get("src")
+            if not sp: return None
+            full=sp if os.path.isabs(sp) else os.path.join(W,sp)
+            return full if os.path.exists(full) else None
+
+        beds=[(l,resolve(l)) for l in music]; beds=[(l,f) for l,f in beds if f]
+        hits=[(l,resolve(l)) for l in sfx];   hits=[(l,f) for l,f in hits if f]
+
+        duck=au.get("duck",{}) if isinstance(au.get("duck"),dict) else ({} if au.get("duck",True) else None)
+        ducking=duck is not None and bool(beds)
+
+        inputs=["-i",cur]; parts=[]; idx=1; mix=[]
+        voice="[0:a]"
+        if ducking:
+            # one copy of the voice for the mix, one key per bed
+            keys=[f"[k{i}]" for i in range(len(beds))]
+            parts.append(f"[0:a]asplit={len(beds)+1}[voice]"+"".join(keys))
+            voice="[voice]"
+        mix.append(voice)
+
+        def layer_chain(layer,label):
             st=max(0.0,remap(float(layer.get("start",0)))-A); gain=float(layer.get("gain",-18))
             fi=float(layer.get("fadeIn",0)); fo=float(layer.get("fadeOut",0)); dl=float(layer.get("dur",span))
-            inputs+=["-i",src2]
-            ch=f"[{idx}:a]atrim=0:{dl},adelay={int(st*1000)}|{int(st*1000)},volume={10**(gain/20):.4f}"
+            ch=(f"[{label}:a]atrim=0:{dl},adelay={int(st*1000)}|{int(st*1000)},"
+                f"volume={10**(gain/20):.4f}")
             if fi>0: ch+=f",afade=t=in:st=0:d={fi}"
             if fo>0: ch+=f",afade=t=out:st={max(0,dl-fo)}:d={fo}"
-            lbl=f"[a{idx}]"; parts.append(ch+lbl); mix.append(lbl); idx+=1
+            return ch
+
+        for i,(layer,full) in enumerate(beds):
+            inputs+=["-i",full]
+            lbl=f"[a{idx}]"; parts.append(layer_chain(layer,idx)+lbl)
+            if ducking:
+                # threshold/ratio chosen so speech pulls the bed down clearly without pumping;
+                # the slow release keeps it from surging between words.
+                th=float(duck.get("threshold",0.045)); ra=float(duck.get("ratio",8))
+                at=float(duck.get("attack",15)); re=float(duck.get("release",350))
+                out=f"[d{idx}]"
+                parts.append(f"{lbl}[k{i}]sidechaincompress=threshold={th}:ratio={ra}"
+                             f":attack={at}:release={re}:level_sc=1{out}")
+                mix.append(out)
+            else:
+                mix.append(lbl)
+            idx+=1
+
+        for layer,full in hits:
+            inputs+=["-i",full]
+            lbl=f"[a{idx}]"; parts.append(layer_chain(layer,idx)+lbl); mix.append(lbl); idx+=1
+
         pol=au.get("polish")
         POLISH={"none":"", "voice":"highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=8:release=180",
                 "warm":"highpass=f=70,equalizer=f=180:t=q:w=1:g=1.5,acompressor=threshold=-20dB:ratio=2.5",
                 "podcast":"highpass=f=90,acompressor=threshold=-16dB:ratio=4:attack=5:release=150,alimiter=limit=0.95"}
         chain=POLISH.get(str(pol).lower(),"") if pol else ""
         post=(chain+",") if chain else ""
-        filt=";".join(parts)+(";" if parts else "")+"".join(mix)+f"amix=inputs={len(mix)}:duration=first:normalize=0,{post}loudnorm=I={lufs}:TP=-1.5:LRA=11[aout]"
+        filt=";".join(parts)+(";" if parts else "")+"".join(mix)+ \
+             f"amix=inputs={len(mix)}:duration=first:normalize=0,{post}loudnorm=I={lufs}:TP=-1.5:LRA=11[aout]"
         run(["ffmpeg","-hide_banner","-y",*inputs,"-filter_complex",filt,"-map","0:v","-map","[aout]",
              "-c:v","copy","-c:a","aac","-b:a","192k","-movflags","+faststart",a.out],log=os.path.join(T,"audio_mix.log"))
     else:

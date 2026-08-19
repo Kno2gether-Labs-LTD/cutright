@@ -141,8 +141,29 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
           provider: 'elevenlabs',
           makes: ['sfx', 'voiceover', 'music'],
           configured: !!(process.env.ELEVENLABS_API_KEY || existsSync(join(process.env.HOME || '', '.config/kno/elevenlabs.env'))),
-          howTo: `python3 "${enginePath}/audio_agent.py" sfx --prompt "<sound>" --at <seconds> --dur 2 --project project.json`,
-          then: 'the layer is added to audio.sfx[] and mixed on render',
+
+          // Two ways in, and they are for different jobs.
+          mcp: {
+            server: 'elevenlabs',
+            addedWhen: 'the user saves an ElevenLabs key in the app — it writes .mcp.json for this '
+                     + 'project and passes the key through the environment, so the file holds '
+                     + '${ELEVENLABS_API_KEY} and never the key itself',
+            tools: ['text_to_sound_effects', 'compose_music', 'create_composition_plan', 'text_to_speech'],
+            useItFor: 'anything that needs judgement — a bed built from a composition plan, effects '
+                    + 'chosen per transition, a voiceover in a particular voice. You can hear the '
+                    + 'result and try again.',
+            afterwards: 'save the file into the project folder and add it to audio.music[] or '
+                      + 'audio.sfx[] yourself — generating a sound does not place it',
+          },
+          cli: {
+            howTo: `python3 "${enginePath}/audio_agent.py" sfx --prompt "<sound>" --at <seconds> --dur 2 --project project.json`,
+            useItFor: 'one obvious sound at one obvious moment — it generates AND places in a step',
+          },
+          mixing: 'Music is side-chained to the voice: it steps back about 7dB while someone is '
+                + 'talking and comes up in the gaps, so write a bed at around -18dB and let the mix '
+                + 'do the rest. Effects are not ducked — they are meant to land. Set audio.duck to '
+                + 'false to turn it off, or to an object to tune threshold/ratio/attack/release.',
+          then: 'the layer is added to audio.sfx[]/audio.music[] and mixed on render',
         },
         image: { configured: false, note: 'not wired yet — when it is, this entry says how to call it' },
         video: { configured: false, note: 'not wired yet — when it is, this entry says how to call it' },

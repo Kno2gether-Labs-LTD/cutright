@@ -1387,6 +1387,74 @@ export async function runEditTests({ win, settings, app }) {
     return { caught: bad.errors, warnings: bad.warnings, rows: shown.rows, leftOver: good.errors };
   });
 
+
+  // ---------------------------------------------------------------- sound
+  await test('sound: saving an ElevenLabs key wires the MCP server without writing the key down', async () => {
+    const mcpFile = join(settings.work, '.mcp.json');
+    const before = existsSync(mcpFile) ? readFileSync(mcpFile, 'utf8') : null;
+
+    const saved = await js(`window.editor.transcribe.setKey('elevenlabs', 'sk-selftest-elevenlabs-key')`, true);
+    await wait(600);
+    if (saved?.ok !== true) {
+      // an OS that will not answer for the keychain is not this test's business
+      expect(/keychain/i.test(saved?.error || ''), 'saving failed for an unexplained reason: ' + saved?.error);
+      return { keychainRefused: saved.error };
+    }
+
+    expect(existsSync(mcpFile), 'saving the key did not write .mcp.json');
+    const doc = JSON.parse(readFileSync(mcpFile, 'utf8'));
+    const entry = doc.mcpServers?.elevenlabs;
+    expect(entry, '.mcp.json has no elevenlabs server: ' + JSON.stringify(doc).slice(0, 160));
+    expect(entry.command === 'uvx' && entry.args?.includes('elevenlabs-mcp'),
+      'the server entry does not run the ElevenLabs MCP: ' + JSON.stringify(entry));
+
+    // The point of the env-var indirection: a project folder gets zipped, synced and sometimes
+    // committed. The key must not be in it.
+    const raw = readFileSync(mcpFile, 'utf8');
+    expect(!raw.includes('sk-selftest-elevenlabs-key'), 'THE KEY WAS WRITTEN INTO .mcp.json');
+    expect(/\$\{ELEVENLABS_API_KEY\}/.test(raw), '.mcp.json does not reference the environment variable');
+
+    const status = await js(`window.editor.integrationStatus('elevenlabs')`, true);
+    expect(status.registered === true && status.hasKey === true,
+      'the app does not report the integration as wired: ' + JSON.stringify(status));
+    expect(Array.isArray(status.tools) && status.tools.includes('text_to_sound_effects'),
+      'the status does not say what the agent gains: ' + JSON.stringify(status.tools));
+
+    // clearing takes it away again, and leaves nothing behind
+    await js(`window.editor.transcribe.setKey('elevenlabs', '')`);
+    await wait(600);
+    const after = existsSync(mcpFile) ? JSON.parse(readFileSync(mcpFile, 'utf8')) : null;
+    expect(!after?.mcpServers?.elevenlabs, 'clearing the key left the MCP server behind');
+
+    if (before !== null) writeFileSync(mcpFile, before);
+    return { tools: status.tools.length, uvx: status.toolPath ? 'found' : 'missing' };
+  });
+
+  await test('sound: the panel offers effects, music and voice without a blocking dialog', async () => {
+    const r = await js(`(() => {
+      document.querySelector('[data-gen]').click();
+      const buttons = [...document.querySelectorAll('#inspector button')].map(b => b.textContent);
+      return { badge: document.querySelector('#selBadge').textContent, buttons,
+               hasInput: !!document.querySelector('#inspector input') };
+    })()`);
+    expect(r.badge === 'sound', 'the sound panel did not open: ' + r.badge);
+    expect(r.buttons.includes('Effect') && r.buttons.includes('Music bed') && r.buttons.includes('Voiceover'),
+      'the panel does not offer the three kinds: ' + r.buttons.join(','));
+    expect(r.buttons.includes('Generate'), 'there is no way to generate anything');
+    expect(r.buttons.some((b) => /Claude/.test(b)), 'the panel does not offer to hand it to the agent');
+    expect(r.hasInput, 'there is nowhere to describe the sound');
+
+    // switching kind must change what it asks for, not just the label
+    const music = await js(`(() => {
+      [...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Music bed').click();
+      const f = [...document.querySelectorAll('#inspector .field label')].map(l => l.textContent);
+      return { fields: f, hint: document.querySelector('#inspector .hint')?.textContent || '' };
+    })()`);
+    expect(music.fields.some((f) => /music/i.test(f)), 'choosing music did not change the question: ' + music.fields);
+    expect(/duck/i.test(music.hint), 'the panel never mentions that music ducks under the voice');
+    return { buttons: r.buttons.length };
+  });
+
   // ---------------------------------------------------------------- security
   await test('security: cve:// refuses a path outside the workspace', async () => {
     const r = await js(`(async () => {

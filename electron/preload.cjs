@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld('editor', {
     },
   },
   verify: () => ipcRenderer.invoke('project:verify'),
+  // what an integration needs, and whether it is wired up
+  integrationStatus: (provider) => ipcRenderer.invoke('keys:status', provider),
   autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
     noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,

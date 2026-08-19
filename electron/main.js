@@ -9,6 +9,7 @@ import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProc
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { makeKeyStore } from './keys.mjs';
+import * as mcp from './mcp.mjs';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { spawn } from 'node:child_process';
@@ -884,7 +885,7 @@ function analyzeCuts(opts = {}) {
 }
 
 // ---------------------------------------------------------------- audio generation
-async function generateAudio({ kind, text, at }) {
+async function generateAudio({ kind, text, at, dur }) {
   // A key saved in the app was never reaching the generator, which only read the environment —
   // so "saved" keys silently did nothing here. Unlock it at the point of use and pass it down.
   const elevenlabs = await getApiKey('elevenlabs');
@@ -892,9 +893,11 @@ async function generateAudio({ kind, text, at }) {
     if (!['sfx', 'voice', 'music'].includes(kind)) return res({ ok: false, error: 'bad kind' });
     const script = join(settings.engine, 'audio_agent.py');
     const args = [script, kind, '--project', projectPath()];
-    if (kind === 'sfx') args.push('--prompt', text, '--at', String(at), '--dur', '2');
+    // the panel asks for a length; fall back to what each kind usually wants
+    const seconds = Number(dur) > 0 ? String(Number(dur)) : (kind === 'music' ? '30' : '2');
+    if (kind === 'sfx') args.push('--prompt', text, '--at', String(at), '--dur', seconds);
     else if (kind === 'voice') args.push('--text', text, '--at', String(at));
-    else args.push('--prompt', text, '--start', String(at), '--dur', '30');
+    else args.push('--prompt', text, '--start', String(at), '--dur', seconds);
     import('node:child_process').then(({ spawn }) => {
       const py = spawn(settings.python, args, {
         cwd: settings.work,
@@ -933,6 +936,16 @@ async function startTerm(wc) {
   const pty = await loadPty();
   killTerm(wc.id);
   const env = cleanEnv();
+  // `.mcp.json` refers to ${ELEVENLABS_API_KEY} rather than carrying the key, so the shell Claude
+  // runs in is where the value has to appear. Unlocking touches the keychain, which is bounded
+  // (see keys.mjs) — and a terminal that opens a moment later is better than a key on disk.
+  for (const [provider, server] of Object.entries(mcp.SERVERS)) {
+    if (!hasApiKey(provider)) continue;
+    try {
+      const v = await getApiKey(provider);
+      if (v) env[server.envVar] = v;
+    } catch (e) { log('mcp env', provider, e.message); }
+  }
   const shellPath = env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
   // A LOGIN shell: a packaged GUI app does not inherit the user's PATH, so `claude`
   // would not resolve. fix-path (below, at startup) + `-l` covers both cases.
@@ -1097,7 +1110,26 @@ function registerIpc() {
       keys: knownKeys(),
     };
   });
-  ipcMain.handle('keys:set', (_e, { provider, value }) => setApiKey(String(provider), String(value || '')));
+  ipcMain.handle('keys:set', async (_e, { provider, value }) => {
+    const p = String(provider);
+    const r = await setApiKey(p, String(value || ''));
+    // Saving a key is the whole setup step: it also gives the agent the matching MCP server, so
+    // "paste key, press save" ends with Claude able to make sound. Clearing it takes it back.
+    if (r?.ok && settings.work && mcp.SERVERS[p]) {
+      try {
+        const m = value ? mcp.register(settings.work, p) : mcp.unregister(settings.work, p);
+        log('mcp', p, JSON.stringify(m));
+        r.mcp = m;
+        refreshAgentBrief();
+      } catch (e) { r.mcp = { ok: false, error: e.message }; }
+    }
+    return r;
+  });
+
+  ipcMain.handle('keys:status', (_e, provider) => {
+    if (!settings.work) return { known: false, error: 'no project open' };
+    return mcp.status(settings.work, String(provider), { hasKey: hasApiKey(String(provider)), which });
+  });
 
   // Pick an overlay clip (HyperFrames MOV/WebM with alpha, or a PNG sequence's first frame).
   ipcMain.handle('overlay:pick', async () => {

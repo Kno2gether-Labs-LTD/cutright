@@ -918,16 +918,111 @@ async function addOverlay() {
   save(); renderTimeline(); select('overlay', project.overlays.length - 1);
 }
 
-async function genAudio() {
-  const kind = prompt('Generate what? sfx | voice | music', 'sfx');
-  if (!kind) return;
-  const text = prompt(kind === 'voice' ? 'Voiceover text:' : `Describe the ${kind}:`, kind === 'sfx' ? 'whoosh transition' : '');
-  if (!text) return;
-  const at = +(kind === 'music' ? 0 : video.currentTime).toFixed(1);
-  setStatus(`Generating ${kind} with ElevenLabs…`, 'working');
-  const r = await E.generateAudio({ kind, text, at });
-  if (r.ok) { setStatus(`${kind} added`, 'ok'); await loadProject(); }
-  else setStatus('Audio generation failed: ' + String(r.error || '').slice(0, 90), 'error');
+// ---------------------------------------------------------------- sound
+// Music and effects, either made here or made by the agent. The app calls ElevenLabs directly
+// because a single "whoosh at the playhead" should not need a conversation; the same key wires
+// the ElevenLabs MCP server, so anything more considered — a bed that follows the edit, a
+// composition plan — is something Claude can do properly with the whole project in front of it.
+let sound = { kind: 'sfx', text: '', dur: 2, busy: false, log: [] };
+
+function genAudio() { renderSoundPanel(); }
+
+function renderSoundPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'sound';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'sound';
+  const when = document.createElement('span');
+  const layers = (project?.audio?.music?.length || 0) + (project?.audio?.sfx?.length || 0);
+  when.textContent = layers ? `${layers} layer${layers > 1 ? 's' : ''}` : 'nothing yet';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+
+  const kinds = document.createElement('div'); kinds.className = 'btnrow';
+  [['Effect', 'sfx'], ['Music bed', 'music'], ['Voiceover', 'voice']].forEach(([label, k]) => {
+    kinds.appendChild(btn(label, () => {
+      sound.kind = k;
+      sound.dur = k === 'music' ? 30 : k === 'voice' ? 0 : 2;
+      renderSoundPanel();
+    }, sound.kind === k ? 'primary' : ''));
+  });
+  wrap.appendChild(kinds);
+
+  const at = +(sound.kind === 'music' ? 0 : (video?.currentTime || 0)).toFixed(1);
+  wrap.appendChild(hint(sound.kind === 'sfx'
+    ? `A short effect, placed at the playhead (${fmt(at)}). Describe the sound, not the feeling: `
+      + '"paper slide", "soft whoosh", "camera shutter".'
+    : sound.kind === 'music'
+    ? 'A bed under the whole edit. It ducks under the voice automatically, so describe the mood '
+      + 'and let it sit quietly: "warm analogue underscore, no drums".'
+    : `Spoken audio placed at the playhead (${fmt(at)}) — type the words themselves.`));
+
+  const f = field(sound.kind === 'voice' ? 'What should it say' : `Describe the ${sound.kind === 'music' ? 'music' : 'effect'}`,
+    sound.text, (v) => { sound.text = v; });
+  const input = f.querySelector('input');
+  input.placeholder = sound.kind === 'sfx' ? 'soft whoosh transition'
+    : sound.kind === 'music' ? 'warm analogue underscore, no drums' : 'In this video…';
+  wrap.appendChild(f);
+
+  if (sound.kind !== 'voice') {
+    wrap.appendChild(rowOf([
+      field('Length (s)', sound.dur, (v) => { sound.dur = +v; }, 'number'),
+    ]));
+  }
+
+  const go = btn(sound.busy ? 'Generating…' : 'Generate', async () => {
+    const text = (input.value || sound.text || '').trim();
+    if (!text) return setStatus('Say what you want first', 'error');
+    sound.text = text; sound.busy = true; renderSoundPanel();
+    setStatus(`Generating ${sound.kind} with ElevenLabs…`, 'working');
+    const r = await E.generateAudio({ kind: sound.kind, text, at, dur: sound.dur });
+    sound.busy = false;
+    if (r?.ok) {
+      sound.log.unshift(`${sound.kind}: ${text.slice(0, 40)}`);
+      setStatus(`${sound.kind} added`, 'ok');
+      await loadProject();
+    } else {
+      setStatus('Generation failed: ' + String(r?.error || '').slice(0, 90), 'error');
+    }
+    renderSoundPanel();
+  }, 'primary');
+  go.disabled = sound.busy;
+
+  wrap.appendChild(btnRow(go, btn('Ask Claude instead', () => {
+    // For anything that needs to know the edit — a bed that follows the beats, effects on every
+    // transition — the agent has the project in front of it and the same account through MCP.
+    startAgentEdit();
+    setTimeout(() => E.term.write(
+      `Add ${sound.kind === 'music' ? 'a music bed' : 'sound effects'} using the ElevenLabs MCP, `
+      + `then place them in project.json audio.${sound.kind === 'music' ? 'music' : 'sfx'}[].\r`), 4500);
+  })));
+
+  // what is already on the timeline
+  const all = [...(project?.audio?.music || []).map((l) => ({ ...l, kind: 'music' })),
+               ...(project?.audio?.sfx || []).map((l) => ({ ...l, kind: 'sfx' }))]
+    .sort((a, b) => (a.start || 0) - (b.start || 0));
+  if (all.length) {
+    const list = document.createElement('div'); list.className = 'ac-list';
+    all.forEach((l) => {
+      const row = document.createElement('div'); row.className = 'ac-item';
+      const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(l.start || 0);
+      const lbl = document.createElement('span'); lbl.className = 'lbl';
+      lbl.textContent = (l.src || 'no file').split('/').pop() + ` · ${l.gain ?? -18}dB`;
+      const rsn = document.createElement('span'); rsn.className = 'rsn ' + l.kind; rsn.textContent = l.kind;
+      row.append(t, lbl, rsn);
+      row.onclick = () => { video.currentTime = clamp((l.start || 0) - 0.3, 0, dur); video.play().catch(() => {}); };
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+    wrap.appendChild(hint('Music ducks under the voice on export — a bed at -18dB is right. '
+      + 'Click a layer to hear where it lands; edit or delete it on the Audio track.'));
+  }
+  box.appendChild(wrap);
 }
 
 // ---------------------------------------------------------------- home
@@ -1696,13 +1791,43 @@ function renderTranscribePanel() {
       setStatus('Saving to the OS keychain — macOS may ask you to allow it…', 'working');
       const r = await E.transcribe.setKey(provider, input.value);
       input.value = '';
-      setStatus(r.ok ? `${provider} key saved` : 'Could not save key', r.ok ? 'ok' : 'error');
+      // Saving an ElevenLabs key also hands the agent the ElevenLabs MCP server, which is the
+      // point of the button — say what happened rather than leaving it to be discovered.
+      const wired = r.mcp?.added ? ` — Claude can now generate sound (${r.mcp.tools.length} tools)`
+                  : r.mcp?.note ? ` — ${r.mcp.note}` : '';
+      setStatus(r.ok ? `${provider} key saved${wired}` : 'Could not save key: ' + (r.error || ''),
+        r.ok ? 'ok' : 'error');
       stt.engines = await E.transcribe.engines(); renderTranscribePanel();
     }), btn('Clear', async () => {
       await E.transcribe.setKey(provider, '');
       stt.engines = await E.transcribe.engines(); renderTranscribePanel();
     }));
     box.appendChild(f); box.appendChild(row);
+
+    // For providers that come with an MCP server, show whether the agent can actually use it —
+    // a saved key and a missing runner look identical otherwise.
+    if (provider === 'elevenlabs') {
+      const note = document.createElement('div'); note.className = 'ac-summary';
+      note.textContent = 'Saving this key also adds the ElevenLabs MCP server to this project, so '
+        + 'Claude can make sound effects and music itself. The key is not written into the file — '
+        + 'it stays in the keychain and reaches Claude through the terminal.';
+      box.appendChild(note);
+      E.integrationStatus('elevenlabs').then((st) => {
+        if (!st?.known) return;
+        const line = document.createElement('div'); line.className = 'ac-summary';
+        line.innerHTML = st.registered
+          ? `<b>Wired up.</b> <span class="dim">${st.tools.join(', ')}</span>`
+            + '<br><span class="dim">Claude asks once, the first time it runs in this project, '
+            + 'before it will use a server the project defines. Say yes.</span>'
+          : st.hasKey ? 'Key saved, but the server is not in this project yet — save it again.'
+                      : '<span class="dim">No key yet.</span>';
+        if (!st.toolPath) {
+          line.innerHTML += `<br><span class="dim">Needs <code>${st.tool}</code> — ${st.why}. `
+            + `Install it with <code>${st.install}</code>.</span>`;
+        }
+        box.insertBefore(line, note.nextSibling);
+      }).catch(() => {});
+    }
   });
 
   box.appendChild(sep());

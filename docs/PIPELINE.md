@@ -8,7 +8,7 @@ The intended flow, and what actually exists today.
 | 2 | **Transcribe + mark cuts** | ✅ local Whisper; auto-cut reads the waveform (`silencedetect`) and the word-level transcript (fillers, stutters) |
 | 3 | **Template + grade** | ✅ template packs set caption style, scene types, overlay presets; looks and audio polish are separate |
 | 4 | **Preprocess — one action that does 2 and 3 and writes it all down** | ✅ **Prepare** in the toolbar: transcribe → cut → decide who has the frame → apply the pack → size the panels, every decision written into `project.json` with its reason |
-| 5 | **Final edit — motion graphics, music, SFX** | ⚠️ the agent does this from the brief; audio generation exists but is not part of a flow |
+| 5 | **Final edit — motion graphics, music, SFX** | ✅ a **Sound** panel makes effects, beds and voiceover; saving an ElevenLabs key also wires the **ElevenLabs MCP server** into the project, so the agent can compose properly. Music is side-chained to the voice |
 | 6 | **Agent verification** | ✅ `engine/verify_project.py` — the mistakes only a render would otherwise reveal, each with what to do about it. **Check** in the toolbar; the agent is told to run it before saying it is finished |
 | 7 | **Layered save, then render** | ✅ `--layers` (the **Layers** tick beside Export): picture / graphics / captions / voice / generated sound, the last with alpha. Stacked in order they *are* the flat render — checked by stacking them and measuring |
 
@@ -54,3 +54,29 @@ Not a fixed number. A panel is up for as long as what it shows is worth reading,
 
 Templates carry these numbers (`pacing`), so a fast tutorial pack and a slow explainer pack differ
 without anyone editing a scene by hand.
+
+
+## Sound
+
+Two ways in, for different jobs.
+
+**The panel** (the ✨ on the Audio track) calls ElevenLabs directly — one obvious sound at one
+obvious moment, generated and placed in a step.
+
+**The MCP server** is for anything needing judgement: a bed built from a composition plan, an
+effect chosen per transition, a voiceover in a particular voice. Saving an ElevenLabs key writes
+`.mcp.json` for the project — the same entry `claude mcp add-json --scope project` writes, checked
+against it — giving the agent `text_to_sound_effects`, `compose_music`, `create_composition_plan`
+and `text_to_speech`.
+
+**The key is never in the file.** `.mcp.json` holds `${ELEVENLABS_API_KEY}`; the value stays in the
+OS keychain and is put into the environment of the terminal Claude runs in. A project folder gets
+zipped, synced and sometimes committed — a secret in it is a secret published.
+
+Claude asks once, the first time it runs in a project, before using a server that project defines.
+That prompt is a real protection (a project folder can come from anywhere) and is not worked
+around; the app pre-approves its own entry so there is one question rather than two.
+
+**Music ducks.** Each bed is side-chained to the voice — measured at about 7 dB of step-back under
+speech, recovering in the gaps — because a fixed gain that works in the gaps is too loud under a
+sentence. Effects are left alone; they are meant to land.
