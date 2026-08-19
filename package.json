@@ -34,7 +34,8 @@
     "signing:local": "bash scripts/setup-signing.sh local",
     "check:library": "node scripts/check-library.mjs",
     "check:agents": "node scripts/check-agents.mjs",
-    "check:preview": "node scripts/check-preview.mjs"
+    "check:preview": "node scripts/check-preview.mjs",
+    "check:cutplan": "node scripts/check-cutplan.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

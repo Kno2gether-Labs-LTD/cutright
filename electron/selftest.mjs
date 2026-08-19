@@ -4,6 +4,7 @@
 // Every feature the pre-Electron web app had is covered here, plus the ones Phase 0 added.
 // Run: CVE_SMOKE=ui,edit npm run smoke
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { join, dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1140,6 +1141,83 @@ export async function runEditTests({ win, settings, app }) {
     await settle();
     expect((disk().zooms || []).length === before, 'deleting the zoom did not remove it from the project');
     return { added: added.length, x: z.x, y: z.y, start: z.start };
+  });
+
+  await test('cuts: a model reading the transcript adds suggestions, unticked and reasoned', async () => {
+    // A fake OpenAI-compatible endpoint, so the whole path is exercised with no key, no network
+    // and no bill. What is being tested is the wiring and the guardrails, not the model.
+    // The fixture transcript is a single sentence, which the planner correctly declines to spend
+    // a request on. Give it something with structure, and put it back afterwards.
+    const tPath = join(settings.work, 'transcript.json');
+    const tBackup = existsSync(tPath) ? readFileSync(tPath, 'utf8') : null;
+    const spoken = ['this is the first thing.', 'and here is a false start.',
+                    'let me try that again.', 'the actual explanation goes here.',
+                    'one more point to make.', 'that is everything, thanks.'];
+    const madeWords = [];
+    let clock = 0.1;
+    for (const line of spoken) {
+      for (const word of line.split(' ')) {
+        madeWords.push({ text: word, start: +clock.toFixed(2), end: +(clock + 0.18).toFixed(2) });
+        clock += 0.22;
+      }
+      clock += 0.05;                      // sentences end on a full stop, not only on a pause
+    }
+    writeFileSync(tPath, JSON.stringify(madeWords));
+
+    let asked = null;
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', (d) => { body += d; });
+      req.on('end', () => {
+        if (req.url.endsWith('/models')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ data: [{ id: 'fake' }] }));
+        }
+        asked = JSON.parse(body || '{}');
+        // Ask for the second sentence, plus one segment that does not exist — the invented one
+        // must be dropped rather than becoming a cut somewhere arbitrary.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: {
+          content: '{"cuts":[{"from":2,"to":2,"reason":"abandoned take","confidence":"high"},'
+                 + '{"from":99,"to":99,"reason":"invented","confidence":"high"}]}' } }] }));
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${server.address().port}/v1`;
+
+    try {
+      await js(`(async () => await window.editor.llm.set({ baseUrl: '${base}', model: 'fake' }))()`, true);
+      const st = await js(`(async () => await window.editor.llm.status())()`, true);
+      expect(st.model === 'fake', 'the endpoint was not saved: ' + JSON.stringify(st));
+
+      const plain = await js(`(async () => await window.editor.autoCut({ ai: false }))()`, true);
+      const read = await js(`(async () => await window.editor.autoCut({ ai: true }))()`, true);
+      expect(!read.error, 'auto-cut with reading failed: ' + read.error);
+      expect(asked, 'the endpoint was never asked anything');
+      expect(/segment number/i.test(asked.messages?.[0]?.content || ''),
+        'the model was not told what shape to answer in');
+
+      const ai = (read.proposals || []).filter((p) => p.reason === 'ai');
+      expect(ai.length >= 1, `reading the transcript added nothing (${read.proposals.length} proposals total)`);
+      expect(ai.length === 1, `an invented segment number became a cut (${ai.length} ai cuts)`);
+      expect(/abandoned take/.test(ai[0].label || ''), 'the reason was not carried through: ' + ai[0].label);
+
+      // It may only ever add. Losing a measured silence to an opinion would be the worst outcome.
+      const acoustic = (read.proposals || []).filter((p) => p.reason !== 'ai');
+      expect(acoustic.length === (plain.proposals || []).length,
+        `reading changed the acoustic proposals: ${(plain.proposals || []).length} → ${acoustic.length}`);
+
+      // And every suggestion has to sit on real word boundaries, never inside a word.
+      const onBoundary = (t) => madeWords.some((w) => Math.abs(w.start - t) < 0.02 || Math.abs(w.end - t) < 0.02);
+      expect(onBoundary(ai[0].start) && onBoundary(ai[0].end),
+        `a suggested cut clips a word: ${ai[0].start}–${ai[0].end}`);
+
+      return { aiCuts: ai.length, acoustic: acoustic.length, label: ai[0].label };
+    } finally {
+      server.close();
+      await js(`(async () => await window.editor.llm.set({ baseUrl: '', model: '' }))()`, true);
+      if (tBackup != null) writeFileSync(tPath, tBackup);
+    }
   });
 
   await test('preview: a cut is skipped as you play, without waiting for a render', async () => {

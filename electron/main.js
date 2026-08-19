@@ -17,6 +17,8 @@ import { writeAgentFiles } from './brief.mjs';
 import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
 import { listLibrary } from './library.mjs';
 import { listAgents, byId as agentById, launchCommand, kickoffPrompt, resolveBin, DEFAULT_AGENT } from './agents.mjs';
+import { segmentsFrom, chunk as chunkTranscript, promptFor, parsePlan, merge as mergeCuts, SYSTEM as CUT_SYSTEM } from './cutplan.mjs';
+import * as llm from './llm.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -889,6 +891,51 @@ async function transcribeMedia(webContents, opts = {}) {
 
 // ---------------------------------------------------------------- analysis (auto-cut)
 // Runs in its own utilityProcess: it shells out to ffmpeg, so it must not sit on main.
+// ---------------------------------------------------------------- cuts, by reading the words
+// silencedetect knows when nobody is speaking; it cannot know that a take was abandoned or that
+// an aside went nowhere. A model reading the transcript can. It never touches the video: it
+// returns segment numbers, cutplan.mjs turns those into spans that already exist in the
+// transcript, and they arrive in the same review panel as everything else for the user to tick.
+async function planCutsByReading({ words, acoustic, onNote }) {
+  const cfg = settings.llm || {};
+  if (!cfg.baseUrl || !cfg.model) return { cuts: [], note: 'no endpoint configured' };
+
+  let key = '';
+  try { key = await getApiKey('llm'); } catch { key = ''; }
+
+  const segs = segmentsFrom(words);
+  if (segs.length < 4) return { cuts: [], note: 'not enough speech to read' };
+  const chunks = chunkTranscript(segs, { maxTokens: Number(cfg.maxTokens) || 2000 });
+
+  const found = [];
+  const notes = [];
+  for (let i = 0; i < chunks.length; i++) {
+    onNote?.({ stage: 'reading', i: i + 1, of: chunks.length });
+    const r = await llm.chat({ baseUrl: cfg.baseUrl, apiKey: key, model: cfg.model,
+                               system: CUT_SYSTEM, user: promptFor(chunks[i]),
+                               timeoutMs: Number(cfg.timeoutMs) || 90_000 });
+    if (!r.ok) {
+      // One passage failing is not a reason to lose the rest, but the user should hear about it
+      // rather than wonder why half the video was considered.
+      notes.push(`passage ${i + 1}: ${r.error}`);
+      continue;
+    }
+    const parsed = parsePlan(r.text, chunks[i]);
+    if (parsed.rejected) notes.push(`passage ${i + 1}: ${parsed.rejected}`);
+    found.push(...parsed.cuts);
+  }
+
+  // Overlapping suggestions from the overlapping chunks collapse into one.
+  const deduped = [];
+  for (const c of found.sort((a, b) => a.start - b.start)) {
+    const last = deduped[deduped.length - 1];
+    if (last && c.start < last.end - 0.05) { last.end = Math.max(last.end, c.end); continue; }
+    deduped.push({ ...c });
+  }
+  return { cuts: mergeCuts([], deduped).filter((c) => !acoustic.some((a) => c.start < a.end - 0.05 && c.end > a.start + 0.05)),
+           note: notes.join('; ') || null, passages: chunks.length };
+}
+
 function analyzeCuts(opts = {}) {
   return new Promise((resolve) => {
     if (!settings.work) return resolve({ error: 'no workspace open' });
@@ -902,9 +949,25 @@ function analyzeCuts(opts = {}) {
     const finish = (v) => { if (settled) return; settled = true; try { child.kill(); } catch {} resolve(v); };
 
     child.stderr?.on('data', (d) => log('[analysis!]', d.toString().trim().slice(0, 300)));
-    child.on('message', (m) => {
-      if (m?.type === 'result') finish({ ok: true, ...m });
-      else if (m?.type === 'error') finish({ error: m.error });
+    child.on('message', async (m) => {
+      if (m?.type === 'error') return finish({ error: m.error });
+      if (m?.type !== 'result') return;
+      if (!opts.ai) return finish({ ok: true, ...m });
+      // The acoustic pass has already produced the proposals the waveform can justify. The
+      // reading pass adds the ones it cannot, and can only ever add: a failure here leaves the
+      // user exactly where they would have been without it.
+      let words = [];
+      try {
+        const raw = JSON.parse(readFileSync(join(settings.work, 'transcript.json'), 'utf8'));
+        words = Array.isArray(raw) ? raw : (raw.words || raw.transcript || []);
+      } catch { return finish({ ok: true, ...m, ai: { cuts: 0, note: 'no transcript to read' } }); }
+      try {
+        const r = await planCutsByReading({ words, acoustic: m.proposals || [] });
+        finish({ ok: true, ...m, proposals: mergeCuts(m.proposals || [], r.cuts),
+                 ai: { cuts: r.cuts.length, note: r.note, passages: r.passages } });
+      } catch (e) {
+        finish({ ok: true, ...m, ai: { cuts: 0, note: String(e?.message || e) } });
+      }
     });
     child.on('exit', () => finish({ error: 'analysis worker exited' }));
     setTimeout(() => finish({ error: 'analysis timed out' }), 10 * 60 * 1000);
@@ -1028,6 +1091,38 @@ function registerIpc() {
     // and swaps the player's source underneath tests that are checking something else.
     testing: !!process.env.CVE_SMOKE,
   }));
+
+  // The endpoint that reads the transcript and suggests cuts. Only the OpenAI-compatible shape
+  // is supported, which is not a limitation so much as the point: Ollama, LM Studio, llama.cpp
+  // and vLLM all speak it, so "run a model on my own machine" and "use a hosted one" are the
+  // same code path, and nothing has to ship a model or an inference runtime inside a video editor.
+  ipcMain.handle('llm:status', async () => ({
+    baseUrl: settings.llm?.baseUrl || '', model: settings.llm?.model || '',
+    hasKey: hasApiKey('llm'),
+    local: await llm.detectLocal(),
+  }));
+  ipcMain.handle('llm:set', (_e, o = {}) => {
+    settings.llm = { ...(settings.llm || {}),
+      baseUrl: llm.normaliseBase(o.baseUrl), model: String(o.model || '').slice(0, 120) };
+    saveSettings();
+    return { ok: true, ...settings.llm };
+  });
+  ipcMain.handle('llm:models', async (_e, o = {}) => {
+    const base = llm.normaliseBase(o.baseUrl || settings.llm?.baseUrl);
+    let key = '';
+    try { key = await getApiKey('llm'); } catch {}
+    return llm.listModels({ baseUrl: base, apiKey: key });
+  });
+  // Ask it something trivial, so "is this set up?" is answered by the endpoint rather than by
+  // the first real run failing halfway through a transcript.
+  ipcMain.handle('llm:test', async () => {
+    const cfg = settings.llm || {};
+    let key = ''; try { key = await getApiKey('llm'); } catch {}
+    const r = await llm.chat({ baseUrl: cfg.baseUrl, apiKey: key, model: cfg.model,
+      system: 'Reply with JSON only.', user: 'Reply with exactly {"ok":true}', timeoutMs: 20_000 });
+    if (!r.ok) return r;
+    return { ok: true, text: String(r.text).slice(0, 120), usage: r.usage };
+  });
 
   // Which coding agent does the editing. Everything the app writes is agent-neutral — the brief
   // goes into AGENTS.md as well as CLAUDE.md — so this is a choice, not a port.

@@ -16,7 +16,11 @@
 //
 // `runOp` is injected rather than imported so the rules can be tested against a keychain that
 // hangs, throws, or counts its callers — see scripts/check-keys.mjs.
-const ENV_VAR = { openai: 'OPENAI_API_KEY', elevenlabs: 'ELEVENLABS_API_KEY' };
+// `llm` is the OpenAI-compatible endpoint used to choose cuts. It is separate from `openai`
+// on purpose: it is often a local server with no key at all, and pointing it somewhere else
+// should not disturb transcription.
+const ENV_VAR = { openai: 'OPENAI_API_KEY', elevenlabs: 'ELEVENLABS_API_KEY',
+                  llm: 'CUTRIGHT_LLM_API_KEY' };
 
 export function makeKeyStore({ runOp, getSettings, save, env = process.env }) {
   // main replaces its settings object wholesale when it loads them from disk, so hold the
@@ -59,7 +63,9 @@ export function makeKeyStore({ runOp, getSettings, save, env = process.env }) {
   };
 
   const has = (provider) => !!(getSettings().keys?.[provider] || env[ENV_VAR[provider]]);
-  const known = () => ({ openai: has('openai'), elevenlabs: has('elevenlabs'), keychain });
+  // Derived from ENV_VAR so adding a provider is one edit, not two — the previous version
+  // listed them by hand here and a new one would simply never show up as present.
+  const known = () => ({ ...Object.fromEntries(Object.keys(ENV_VAR).map((p) => [p, has(p)])), keychain });
 
   return { set, get, has, known, probe };
 }

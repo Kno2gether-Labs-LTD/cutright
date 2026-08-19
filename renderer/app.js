@@ -1880,8 +1880,12 @@ function renderTranscribePanel() {
   const kc = eng.keys?.keychain;
   box.appendChild(sechead('Remote engine keys'
     + (kc === true ? ' — stored in the OS keychain' : kc === false ? ' — no keychain available' : ' — encrypted with the OS keychain')));
-  ['openai', 'elevenlabs'].forEach((provider) => {
-    const f = field(`${provider} key ${eng.keys?.[provider] ? '(saved)' : ''}`, '', () => {}, 'password');
+  // `llm` is the endpoint that reads transcripts to suggest cuts. It is here rather than in its
+  // own panel because it is the same kind of secret with the same handling — and a local
+  // endpoint needs no key at all, which is why nothing here is required.
+  ['openai', 'elevenlabs', 'llm'].forEach((provider) => {
+    const label = provider === 'llm' ? 'cut model endpoint key' : provider + ' key';
+    const f = field(`${label} ${eng.keys?.[provider] ? '(saved)' : ''}`, '', () => {}, 'password');
     const input = f.querySelector('input');
     const row = document.createElement('div'); row.className = 'btnrow';
     row.append(btn('Save key', async () => {
@@ -2123,19 +2127,78 @@ function renderPreparePanel(pct) {
 // ---------------------------------------------------------------- auto-cut
 // Two signals, one answer: ffmpeg silencedetect for real dead air, the word-level
 // transcript for fillers/stutters (and to guarantee we never clip speech).
-let autocut = { proposals: [], stats: null, opts: { minSilence: 0.7, pad: 0.15, noiseDb: -35, fillers: true, stutters: true, softFillers: false } };
+let autocut = { proposals: [], stats: null, ai: null,
+  opts: { minSilence: 0.7, pad: 0.15, noiseDb: -35, fillers: true, stutters: true, softFillers: false, ai: false } };
 
 async function runAutoCut() {
   if (!project) return;
-  setStatus('Analysing audio and transcript…', 'working');
+  setStatus(autocut.opts.ai ? 'Analysing audio, then reading the transcript…' : 'Analysing audio and transcript…', 'working');
   $('#btnAutoCut').disabled = true;
   const r = await E.autoCut(autocut.opts);
   $('#btnAutoCut').disabled = false;
   if (r.error) { setStatus('Auto-cut failed: ' + r.error, 'error'); return; }
-  autocut.proposals = r.proposals.map((p) => ({ ...p, take: p.confidence !== 'low' }));
+  // Anything the model suggested starts unticked whatever it claims about its own confidence.
+  // A silence is measured; a reading is an opinion, and opinions get looked at before they land.
+  autocut.proposals = r.proposals.map((p) => ({ ...p, take: p.reason !== 'ai' && p.confidence !== 'low' }));
   autocut.stats = r.stats;
-  setStatus(`Auto-cut found ${r.proposals.length} places to trim (${r.stats.removedSeconds}s)`, 'ok');
+  autocut.ai = r.ai || null;
+  const extra = r.ai ? ` · ${r.ai.cuts} from reading the transcript` : '';
+  setStatus(`Auto-cut found ${r.proposals.length} places to trim (${r.stats.removedSeconds}s)${extra}`, 'ok');
   renderAutoCutPanel();
+}
+
+// ---------------------------------------------------------------- the reading pass, configured
+// Only the OpenAI-compatible shape is supported. That is not a shortcut: Ollama, LM Studio,
+// llama.cpp and vLLM all speak it, so a local model and a hosted one are the same setting, and
+// nothing has to ship a model or an inference runtime inside a video editor.
+async function showCutModelPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'cut model';
+  box.appendChild(sechead('Reading the transcript'));
+  box.appendChild(hint('Silence detection knows when nobody is speaking. It cannot know that a take '
+    + 'was abandoned or that an aside went nowhere. A model reading the transcript can, and its '
+    + 'suggestions arrive unticked next to the others — it never edits anything itself.'));
+
+  const st = await E.llm.status();
+  if (st.local?.length) {
+    box.appendChild(sechead('Already running here'));
+    st.local.forEach((l) => {
+      const b = btn(`${l.name} — use it`, async () => {
+        await E.llm.set({ baseUrl: l.url, model: l.models?.[0] || '' });
+        setStatus(`Using ${l.name}${l.models?.[0] ? ' · ' + l.models[0] : ''}`, 'ok');
+        showCutModelPanel();
+      });
+      b.title = `${l.url}${l.models?.length ? ' · ' + l.models.length + ' models' : ''}`;
+      box.appendChild(b);
+    });
+    box.appendChild(hint('Found on this machine, so nothing leaves it and there is nothing to pay for.'));
+  }
+
+  box.appendChild(sep());
+  box.appendChild(field('Endpoint', st.baseUrl, async (v) => {
+    await E.llm.set({ baseUrl: v, model: st.model }); showCutModelPanel();
+  }));
+  box.appendChild(field('Model', st.model, async (v) => {
+    await E.llm.set({ baseUrl: st.baseUrl, model: v }); showCutModelPanel();
+  }));
+  box.appendChild(hint(st.hasKey
+    ? 'A key is stored for this endpoint. It lives in the OS keychain, not in the project folder.'
+    : 'No key stored. A local endpoint usually needs none; a hosted one does — add it under API keys.'));
+
+  box.appendChild(btnRow(
+    btn('List models', async () => {
+      const r = await E.llm.models({ baseUrl: st.baseUrl });
+      setStatus(r.ok ? `${r.models.length} models: ${r.models.slice(0, 6).join(', ')}` : 'Could not list models: ' + r.error,
+        r.ok ? 'ok' : 'error');
+    }),
+    btn('Test it', async () => {
+      setStatus('Asking the endpoint…', 'working');
+      const r = await E.llm.test();
+      setStatus(r.ok ? 'The endpoint answered — ready to read transcripts' : 'No: ' + r.error, r.ok ? 'ok' : 'error');
+    }, 'primary'),
+  ));
+  box.appendChild(hint('Long videos are sent in passages of about 2000 tokens, so the length of the '
+    + 'recording is not a limit. A passage that fails is skipped and the rest still run.'));
 }
 
 function renderAutoCutPanel() {
@@ -2183,6 +2246,23 @@ function renderAutoCutPanel() {
   toggles.append(tog('fillers', 'fillers'), tog('stutters', 'stutters'), tog('“like/actually”', 'softFillers'),
     btn('Re-analyse', () => runAutoCut()));
   wrap.appendChild(toggles);
+
+  // The reading pass. Off by default and separate from the acoustic toggles above, because it
+  // is a different kind of claim: those are measurements of the waveform, this is an opinion
+  // about the words, and it needs an endpoint the user has chosen.
+  const aiRow = document.createElement('div'); aiRow.className = 'btnrow';
+  aiRow.append(
+    btn(`${autocut.opts.ai ? '✓' : '✗'} read the transcript`, () => { autocut.opts.ai = !autocut.opts.ai; renderAutoCutPanel(); }),
+    btn('Set up…', () => showCutModelPanel()),
+  );
+  wrap.appendChild(aiRow);
+  if (autocut.ai) {
+    wrap.appendChild(hint(autocut.ai.note
+      ? `The model added ${autocut.ai.cuts} suggestion${autocut.ai.cuts === 1 ? '' : 's'} across ${autocut.ai.passages || '?'} passages. Some were skipped — ${autocut.ai.note}`
+      : `The model read ${autocut.ai.passages || '?'} passages and added ${autocut.ai.cuts} suggestion${autocut.ai.cuts === 1 ? '' : 's'}, all unticked.`));
+  } else if (autocut.opts.ai) {
+    wrap.appendChild(hint('Suggestions from the transcript arrive unticked, with a reason, next to the silences.'));
+  }
 
   // proposals
   const list = document.createElement('div'); list.className = 'ac-list';

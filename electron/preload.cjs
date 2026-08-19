@@ -167,8 +167,16 @@ contextBridge.exposeInMainWorld('editor', {
   autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
     noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,
-    softFillers: !!o.softFillers,
+    softFillers: !!o.softFillers, ai: !!o.ai,
   }),
+
+  // --- the endpoint that reads the transcript and suggests cuts ---
+  llm: {
+    status: () => ipcRenderer.invoke('llm:status'),
+    set: (o = {}) => ipcRenderer.invoke('llm:set', { baseUrl: str(o.baseUrl), model: str(o.model) }),
+    models: (o = {}) => ipcRenderer.invoke('llm:models', { baseUrl: str(o.baseUrl) }),
+    test: () => ipcRenderer.invoke('llm:test'),
+  },
 
   // --- media (streamed by the privileged `cve://` scheme, with Range support) ---
   mediaExists: (name) => ipcRenderer.invoke('media:exists', str(name)),

@@ -35,6 +35,8 @@ jobs:
         run: node scripts/check-keys.mjs
       - name: MCP wiring (the key never lands in .mcp.json)
         run: node scripts/check-mcp.mjs
+      - name: Cut planning (a model may suggest, never edit)
+        run: node scripts/check-cutplan.mjs
       - name: Preview time mapping (the app and the engine agree)
         # The render half needs ffmpeg and Pillow, so it runs in the test job; this is the
         # arithmetic, which is where a drifting playhead would come from.
