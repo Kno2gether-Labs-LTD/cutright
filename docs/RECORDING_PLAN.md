@@ -83,6 +83,24 @@ Timings are on the original timeline like everything else, so cuts re-time zooms
    capability in the brief and configured with keys in the OS keychain — same pattern as the STT
    providers, so the agent can be told "upload the export" without new app code.
 
+## Status
+
+- **R1 — capture** ✅ recorder window, source picker, countdown, compact bar, pause/mark/stop,
+  cursor track, chunk-to-disk writer, project on stop (a recording with no speech still builds,
+  just without captions).
+- **R2 — auto-zoom** ✅ `zooms[]` renders with exact geometry (`npm run check:zoom` measures it),
+  proposals from clicks/dwell/transcript, a Zooms track with a click-to-place centre picker, the
+  suggestion review panel, and the brief that tells the agent how to use all of it.
+- **R3 — camera and storage** — not started.
+
+### A macOS note worth keeping
+
+`systemPreferences.getMediaAccessStatus('screen')` reports `granted` even when macOS 26 is in fact
+refusing to hand over the displays. The reliable signal is `desktopCapturer.getSources()` returning
+no `screen:` entries — every Mac has a display, so an empty list means the permission is denied. The
+app checks that before you start, and a capture that produces no bytes in its first four seconds is
+torn down rather than saved as an unreadable zero-byte file. Both paths point at the exact setting.
+
 ## Testing
 
 Recording is hardware- and permission-dependent, so the suite must not require a camera:

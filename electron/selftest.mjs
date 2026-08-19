@@ -3,7 +3,7 @@
 //
 // Every feature the pre-Electron web app had is covered here, plus the ones Phase 0 added.
 // Run: CVE_SMOKE=ui,edit npm run smoke
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -653,6 +653,81 @@ export async function runEditTests({ win, settings }) {
     return { cut, types: r.options.length };
   });
 
+  // ---------------------------------------------------------------- recording
+  await test('recording: sources are enumerable and permissions are reported', async () => {
+    const r = await js(`(async () => {
+      const [listed, perms] = await Promise.all([
+        window.editor.rec.sources(), window.editor.rec.permissions() ]);
+      const sources = listed.sources;
+      return { count: sources.length, hasThumb: sources.every(s => /^data:image/.test(s.thumbnail)),
+               names: sources.slice(0,2).map(s => s.name.slice(0,24)),
+               denied: listed.screenCaptureDenied, perms };
+    })()`, true);
+    expect(r.count > 0, 'no capturable sources were found');
+    expect(r.hasThumb, 'a source came back without a preview thumbnail');
+    // The app must be able to tell that macOS is withholding the displays — a silent empty
+    // recording is the one failure a user cannot diagnose for themselves.
+    expect(typeof r.denied === 'boolean', 'rec:sources does not report whether capture is blocked');
+    expect(['granted','denied','not-determined','restricted','unknown'].includes(r.perms.screen),
+      'screen permission not reported: ' + r.perms.screen);
+    return r;
+  });
+
+  await test('recording: chunks are written to disk and the cursor track is captured', async () => {
+    // Drive the main-process side directly with synthetic chunks — no camera, no permission
+    // prompts, so this runs anywhere including CI.
+    const r = await js(`(async () => {
+      const started = await window.editor.rec.start({ name: 'selftest', screenId: 'screen:0:0', camera: false, mic: false });
+      if (started.error) return { error: started.error };
+      const enc = new TextEncoder();
+      let bytes = 0;
+      for (let i = 0; i < 5; i++) {
+        const res = await window.editor.rec.chunk('screen', enc.encode('chunk-' + i + '-'.repeat(500)).buffer);
+        bytes = res.bytes;
+        await new Promise(r => setTimeout(r, 120));
+      }
+      await window.editor.rec.mark('mark');
+      const summary = await window.editor.rec.stop();
+      return { dir: started.dir, bytes, summary };
+    })()`, true);
+    expect(!r.error, 'recording did not start: ' + r.error);
+    expect(r.bytes > 2000, 'chunks did not accumulate on disk: ' + r.bytes);
+
+    const screenFile = join(r.dir, 'recording', 'screen.mp4');
+    expect(existsSync(screenFile), 'no screen file was written');
+    expect(statSync(screenFile).size === r.bytes, 'the file size does not match what was streamed');
+
+    const cursor = JSON.parse(readFileSync(join(r.dir, 'recording', 'cursor.json'), 'utf8'));
+    expect(cursor.samples.length > 10, 'the cursor track is empty: ' + cursor.samples.length);
+    expect(cursor.samples.every((s) => s.x >= 0 && s.x <= 1 && s.y >= 0 && s.y <= 1),
+      'cursor samples are not normalised 0..1');
+    expect(cursor.events.some((e) => e.type === 'mark'), 'the mark was not recorded');
+    expect(cursor.samples[cursor.samples.length - 1].t > 0.4, 'cursor timestamps are not advancing');
+
+    const { rmSync } = await import('node:fs');
+    try { rmSync(r.dir, { recursive: true, force: true }); } catch {}
+    return { bytes: r.bytes, samples: cursor.samples.length, duration: r.summary.duration };
+  });
+
+  await test('recording: pause stops the clock and the cursor track', async () => {
+    const r = await js(`(async () => {
+      const started = await window.editor.rec.start({ name: 'pausetest', screenId: 'screen:0:0' });
+      await new Promise(r => setTimeout(r, 400));
+      await window.editor.rec.pause();
+      await new Promise(r => setTimeout(r, 900));
+      await window.editor.rec.resume();
+      await new Promise(r => setTimeout(r, 400));
+      const s = await window.editor.rec.stop();
+      return { dir: started.dir, duration: s.duration };
+    })()`, true);
+    // ~0.8s of real recording plus ~0.9s paused: the clock must exclude the pause
+    expect(r.duration > 0.5 && r.duration < 1.4,
+      `paused time was counted: ${r.duration}s (expected ~0.8s of a ~1.7s wall clock)`);
+    const { rmSync } = await import('node:fs');
+    try { rmSync(r.dir, { recursive: true, force: true }); } catch {}
+    return r;
+  });
+
   // ---------------------------------------------------------------- the agent brief
   await test('brief: choosing a template writes instructions the agent can act on', async () => {
     const r = await js(`window.editor.templates.apply('midnight-chalk')`, true);
@@ -968,6 +1043,109 @@ export async function runEditTests({ win, settings }) {
     })()`);
     expect(r.time > r.dur * 0.3 && r.time < r.dur * 0.7, `seek landed at ${r.time} for duration ${r.dur}`);
     return r;
+  });
+
+
+  // ---------------------------------------------------------------- zooms (camera moves)
+  await test('zooms: the track shows six lanes, aligned and none clipped', async () => {
+    const r = await js(`(() => {
+      const panel = document.querySelector('.timeline-panel').getBoundingClientRect();
+      const lanes = [...document.querySelectorAll('.lane')].map((l) => {
+        const b = l.getBoundingClientRect();
+        return { id: l.id, top: Math.round(b.top), clipped: b.bottom > panel.bottom + 0.5 };
+      });
+      const heads = [...document.querySelectorAll('.thead:not(.ruler-head)')]
+        .map((h) => Math.round(h.getBoundingClientRect().top));
+      return { ids: lanes.map((l) => l.id), clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
+               misaligned: lanes.filter((l, i) => Math.abs(l.top - heads[i]) > 2).map((l) => l.id) };
+    })()`);
+    expect(r.ids.includes('laneZooms'), 'there is no Zooms lane');
+    expect(!r.clipped.length, 'lanes fall outside the timeline panel: ' + r.clipped.join(', '));
+    expect(!r.misaligned.length, 'lanes do not line up with their headers: ' + r.misaligned.join(', '));
+    return r;
+  });
+
+  await test('zooms: + adds one at the playhead and the centre picker writes normalised x/y', async () => {
+    const before = (disk().zooms || []).length;
+    await js(`(() => { document.querySelector('#video').currentTime = ${at(0.4)};
+      document.querySelector('[data-add="zoom"]').click(); })()`);
+    await settle();
+    const added = disk().zooms || [];
+    expect(added.length === before + 1, `+ did not add a zoom (${before} → ${added.length})`);
+
+    const picked = await js(`(() => {
+      const pad = document.querySelector('.zoom-pad');
+      if (!pad) return null;
+      const b = pad.getBoundingClientRect();
+      pad.dispatchEvent(new MouseEvent('click', { bubbles: true,
+        clientX: b.left + b.width * 0.25, clientY: b.top + b.height * 0.75 }));
+      return true;
+    })()`);
+    expect(picked, 'the inspector showed no centre picker for the new zoom');
+    await settle();
+    const z = (disk().zooms || []).find((x) => x.source === 'manual');
+    expect(Math.abs(z.x - 0.25) < 0.03 && Math.abs(z.y - 0.75) < 0.03,
+      `centre picker wrote ${z.x}, ${z.y} — expected about 0.25, 0.75`);
+    expect(Math.abs(z.start - at(0.4)) < 0.05, `zoom landed at ${z.start}, expected ${at(0.4)}`);
+
+    // and it must be removable again, or the track is a trap
+    await js(`document.querySelector('#laneZooms .clip.zoom').click()`);
+    await wait(200);
+    await js(`[...document.querySelectorAll('#inspector button')].find(b => b.textContent === 'Delete')?.click()`);
+    await settle();
+    expect((disk().zooms || []).length === before, 'deleting the zoom did not remove it from the project');
+    return { added: added.length, x: z.x, y: z.y, start: z.start };
+  });
+
+  await test('zooms: suggestions from a recording become real zooms when accepted', async () => {
+    // stand in for a recording: the review panel reads recording.zoomSuggestions, whatever wrote it
+    const p = disk();
+    p.recording = {
+      screen: 'recording/screen.mp4', cursor: 'recording/cursor.json', marks: [],
+      zoomSuggestions: [
+        { id: 'zs1', start: at(0.2), dur: 1.8, scale: 1.35, x: 0.3, y: 0.4, source: 'click', confidence: 'high' },
+        { id: 'zs2', start: at(0.6), dur: 2.0, scale: 1.25, x: 0.7, y: 0.5, source: 'dwell', confidence: 'medium' },
+        { id: 'zs3', start: at(0.8), dur: 2.0, scale: 1.2, x: 0.5, y: 0.5, source: 'transcript', confidence: 'low' },
+      ],
+    };
+    const hadZooms = (p.zooms || []).length;
+    await writeProject(p);
+
+    await js(`document.querySelector('#btnZoomSuggest').click()`);
+    await wait(400);
+    const panel = await js(`(() => ({
+      badge: document.querySelector('#selBadge').textContent,
+      rows: document.querySelectorAll('.ac-item').length,
+      ticked: [...document.querySelectorAll('.ac-item input')].filter(c => c.checked).length,
+    }))()`);
+    expect(panel.rows === 3, `review panel listed ${panel.rows} suggestions, expected 3`);
+    // low confidence starts unticked — suggestions are offered, not imposed
+    expect(panel.ticked === 2, `${panel.ticked} suggestions pre-selected, expected 2 (low confidence off)`);
+
+    await js(`[...document.querySelectorAll('#inspector button')].find(b => /^Add /.test(b.textContent))?.click()`);
+    await settle();
+    const after = disk().zooms || [];
+    expect(after.length === hadZooms + 2, `accepted zooms did not land (${hadZooms} → ${after.length})`);
+    expect(after.some((z) => z.id === 'zs1' && z.source === 'click'), 'the accepted zoom lost its identity');
+    expect(!after.some((z) => z.id === 'zs3'), 'an unticked suggestion was added anyway');
+
+    // accepting again must not duplicate
+    await js(`document.querySelector('#btnZoomSuggest').click()`);
+    await wait(300);
+    const second = await js(`document.querySelectorAll('.ac-item').length`);
+    expect(second === 1, `already-accepted suggestions came back (${second} rows, expected 1)`);
+    return { accepted: after.length - hadZooms, remaining: second };
+  });
+
+  await test('zooms: the agent brief tells Claude how to use them', async () => {
+    const briefed = disk().brief;
+    if (!briefed) return { skipped: 'no template chosen in this project' };
+    expect(briefed.capabilities?.zooms, 'the brief lists no zoom capability');
+    expect(/normalised|0\.\.1/.test(JSON.stringify(briefed.capabilities.zooms)),
+      'the brief does not say zoom centres are normalised');
+    const md = existsSync(settings.work + '/CLAUDE.md') ? readFileSync(settings.work + '/CLAUDE.md', 'utf8') : '';
+    expect(/zooms\[\]/.test(md), 'CLAUDE.md never mentions zooms[]');
+    return { hasCapability: true, inDoc: /zoomSuggestions/.test(md) };
   });
 
   // ---------------------------------------------------------------- security

@@ -60,6 +60,20 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       scenes: (t.scenes || []).map((type) => ({ type, use: SCENE_HELP[type] || '' })),
       overlays,
       transitions: ['crossfade', 'dip', 'dipwhite', 'whip', 'wiperight', 'circle', 'smooth', 'pixel'],
+
+      // Camera moves. A push-in is data like everything else: no re-encode decision to make,
+      // no plugin to call — add an entry and the engine animates it on export.
+      zooms: {
+        shape: { start: '<seconds on the original timeline>', dur: '<seconds>',
+                 scale: '1.0 = untouched, 1.3 = a comfortable push-in, 1.6 = aggressive',
+                 x: '0..1 across the frame (0.5 = centre)', y: '0..1 down the frame',
+                 source: 'why it exists: manual | click | dwell | transcript' },
+        example: { id: 'z1', start: 12.4, dur: 2.2, scale: 1.35, x: 0.62, y: 0.41, source: 'manual' },
+        ramp: 'eases in and out over half a second at each end — do not stack two zooms closer than ~1.5s',
+        suggestions: 'if this project came from a screen recording, `recording.zoomSuggestions[]` holds '
+                   + 'candidates found from clicks, cursor dwell and the transcript. Copy the good ones '
+                   + 'into `zooms[]`; leave the rest. They are suggestions, not edits.',
+      },
       looks: ['none', 'film', 'warm', 'cool', 'teal-orange', 'bleach', 'noir', 'vhs'],
       audioPolish: ['none', 'voice', 'warm', 'podcast'],
 
@@ -99,6 +113,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
         'fix mis-heard captions and choose the emphasis word per line',
         'write the scene structure at the strongest beats',
         'render and place motion graphics on the exact words that deserve them',
+        'add camera moves — push in on what matters, especially where the recording suggests it',
         'set the final grade and audio polish',
       ],
       humanDecides: 'the final export, and anything that changes what the video says',
@@ -108,6 +123,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       'project.json is the edit. Change it and the render changes. Never edit the video files directly.',
       'All timings are on the ORIGINAL timeline (the graded master). The engine re-times everything for cuts.',
       'A scene or overlay that straddles a cut is dropped at render time — place them clear of cuts.',
+      'Zoom centres are normalised 0..1, never pixels, so the edit survives a change of resolution.',
       'Preview a range before exporting: a full export of a long video takes minutes.',
       'The user may be editing at the same time. Re-read project.json before writing, and keep your changes additive.',
     ],
@@ -173,8 +189,12 @@ the same way. Match the template's tokens (${Object.entries(t.tokens || {}).filt
    clear of any cut. Use the scene types above. Short headlines; the transcript has the detail.
 5. **Motion graphics.** Where a moment deserves emphasis, render a preset and place it in
    \`overlays[]\` on the exact word (find the timing in \`transcript.json\`).
-6. **Finish.** Set \`grade.look\` and \`audio.polish\` if the brief asks for a mood.
-7. **Check your work.** Render a range preview over two or three of your changes and confirm
+6. **Camera.** Add push-ins to \`zooms[]\` where the eye should go — a demo click, a number on
+   screen, the line that lands. 1.25–1.4× for two seconds reads as intent; more reads as panic.
+   If this project came from a screen recording, \`recording.zoomSuggestions[]\` already lists
+   candidates from clicks, cursor dwell and the words. Copy across the ones that earn it.
+7. **Finish.** Set \`grade.look\` and \`audio.polish\` if the brief asks for a mood.
+8. **Check your work.** Render a range preview over two or three of your changes and confirm
    they land where you intended. Then tell the user what you changed and what you left alone.
 
 Do not run a full export unless the user asks — that is their call.
@@ -193,6 +213,9 @@ Do not run a full export unless the user asks — that is their call.
                   "start":, "dur":, "headline":, "items": [], "big":, "sub":, "target":, "old":, "new": } ],
   "overlays": [ { "id":, "src": "overlays/x.mov", "start":, "dur":, "x": 0, "y": 0, "enabled": true } ],
   "cuts":     [ { "start":, "end":, "transition": "crossfade", "tdur": 0.3 } ],
+  "zooms":    [ { "id":, "start":, "dur":, "scale": 1.3, "x": 0.5, "y": 0.5, "source": "manual" } ],
+  "recording":{ "screen": "recording/screen.mp4", "cursor": "recording/cursor.json",
+                "marks": [], "zoomSuggestions": [ /* same shape as zooms[], plus confidence */ ] },
   "audio":    { "loudnessLUFS": -14, "polish": "voice", "music": [], "sfx": [] }
 }
 \`\`\`

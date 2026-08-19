@@ -154,6 +154,49 @@ def main():
 
     A,B=(a.range if a.range else [0.0,workDur]); span=B-A
 
+    # ---------- 0b. ZOOMS (animated punch-in, applied before anything is drawn on top) ----------
+    # zooms[] = [{start,dur,x,y,scale,ease}] with x/y NORMALISED 0..1 so they survive a
+    # resolution change. crop cannot animate w/h (evaluated once), so this uses zoompan,
+    # whose z/x/y are per-frame expressions. Captions and scenes are composited afterwards
+    # so they stay sharp and unzoomed.
+    zooms=[]
+    for z in P.get("zooms",[]):
+        if z.get("enabled") is False: continue
+        zs=float(z.get("start",0)); zd=float(z.get("dur",0) or 0)
+        if zd<=0: continue
+        if cuts and (in_cut(zs) or in_cut(zs+zd)): continue
+        ns=remap(zs)
+        if ns+zd<=A or ns>=B: continue
+        zooms.append({**z,"_ns":ns-A,"_dur":zd,
+                      "_x":min(1.0,max(0.0,float(z.get("x",0.5)))),
+                      "_y":min(1.0,max(0.0,float(z.get("y",0.5)))),
+                      "_s":min(4.0,max(1.0,float(z.get("scale",1.8))))})
+    if zooms:
+        # zoompan's expression context is NOT the usual filter one: there is no `t` and no
+        # `between()`. It exposes `time` and the basic comparators, so build a nested if-chain
+        # over `time` with gte/lte. Outside every zoom window the expression is 1, i.e. the
+        # untouched picture.
+        RAMP=0.5   # ease in/out, seconds
+        zooms.sort(key=lambda z: z["_ns"])
+        zexpr="1"; cxexpr="0.5"; cyexpr="0.5"
+        for z in reversed(zooms):
+            s0=z["_ns"]; s1=s0+z["_dur"]; sc=z["_s"]
+            e0=s0+RAMP; e1=max(e0, s1-RAMP)
+            cond=f"gte(time,{s0:.3f})*lte(time,{s1:.3f})"
+            ramp=(f"if(lt(time,{e0:.3f}),1+({sc-1:.4f})*(time-{s0:.3f})/{RAMP},"
+                  f"if(gt(time,{e1:.3f}),1+({sc-1:.4f})*({s1:.3f}-time)/{RAMP},{sc:.4f}))")
+            zexpr=f"if({cond},{ramp},{zexpr})"
+            cxexpr=f"if({cond},{z['_x']:.4f},{cxexpr})"
+            cyexpr=f"if({cond},{z['_y']:.4f},{cyexpr})"
+        zoomed=os.path.join(T,"zoomed.mp4")
+        vin_z=["-ss",str(A),"-t",str(span),"-i",src] if a.range else ["-i",src]
+        run(["ffmpeg","-hide_banner","-y",*vin_z,
+             "-vf",(f"zoompan=z='{zexpr}':x='(iw-iw/zoom)*({cxexpr})':y='(ih-ih/zoom)*({cyexpr})'"
+                    f":d=1:s={VW}x{VH}:fps={FPS}"),
+             *HW,"-movflags","+faststart","-c:a","copy",zoomed],log=os.path.join(T,"zoom.log"))
+        src=zoomed
+        if a.range: A,B=0.0,span      # the zoom pass already trimmed to the range
+
     # ---------- 1. captions (resolve overrides, drop inside-cut, remap) ----------
     cues=[]
     for c in P["captions"]["cues"]:

@@ -19,6 +19,7 @@
     <img src="logo.png" alt="" class="logomark">
     <span class="wordmark">Cutright</span>
     <button id="btnHome" class="chip" title="Home (H)">Home</button>
+    <button id="btnRecord" class="chip" title="Record your screen (⇧⌘R)">● Record</button>
     <button id="btnWorkspace" class="chip" title="Change workspace"><span id="work">—</span></button>
   </div>
   <div class="actions">
@@ -67,6 +68,9 @@
             <button class="mini" id="btnTranscribe" title="Transcribe the video and rebuild captions">T</button></div>
           <div class="thead" data-track="cuts"><span>Cuts</span>
             <button class="mini" data-add="cut" title="Cut at the playhead (S)">+</button></div>
+          <div class="thead" data-track="zooms"><span>Zooms</span>
+            <button class="mini" data-add="zoom" title="Push in at the playhead">+</button>
+            <button class="mini" id="btnZoomSuggest" title="Review the zooms suggested from your clicks and speech">★</button></div>
           <div class="thead" data-track="audio"><span>Audio</span>
             <button class="mini" data-add="music" title="Add a music layer">♪</button>
             <button class="mini" data-add="sfx" title="Add an SFX layer">✳</button>
@@ -80,6 +84,7 @@
             <div class="lane" id="laneOverlays" data-lane="overlays"></div>
             <div class="lane" id="laneCaps" data-lane="captions"></div>
             <div class="lane" id="laneCuts" data-lane="cuts"></div>
+            <div class="lane" id="laneZooms" data-lane="zooms"></div>
             <div class="lane" id="laneAudio" data-lane="audio"></div>
             <div class="playhead" id="playhead"></div>
           </div>
@@ -133,7 +138,8 @@
           reading it — delete a sentence and the video cuts itself. Captions, cuts, motion graphics and
           the grade all live in one file your AI agent can edit too.</p>
         <div class="cta">
-          <button id="homeNew" class="primary">Start from a video</button>
+          <button id="homeRecord" class="primary">Record my screen</button>
+          <button id="homeNew">Start from a video</button>
           <button id="homeOpen">Open a project…</button>
         </div>
       </div>

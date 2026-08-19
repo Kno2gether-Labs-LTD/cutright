@@ -120,7 +120,7 @@ video { max-width: 100%; max-height: 100%; outline: none; }
 
 /* ---------------------------------------------------------------- timeline */
 .timeline-panel {
-  height: 268px; min-height: 132px; flex: none; display: flex; flex-direction: column;
+  height: 302px; min-height: 132px; flex: none; display: flex; flex-direction: column;
   background: var(--panel); border-top: 1px solid var(--line);
 }
 .tl-toolbar {
@@ -475,3 +475,26 @@ select:focus { outline: none; border-color: #46506a; }
   font-size: 11.5px; line-height: 1.6; }
 .brief-box b { color: var(--accent); }
 .brief-list { margin: 6px 0 0; padding-left: 16px; color: var(--dim); }
+
+/* zooms: a push-in reads as a lens, so give it its own hue */
+.clip.zoom {
+  background: linear-gradient(180deg, rgba(168,108,247,.30), rgba(168,108,247,.16));
+  border: 1px solid rgba(168,108,247,.55); color: #efe6ff;
+}
+.clip.zoom.selected { border-color: var(--violet, #a86cf7); box-shadow: 0 0 0 1px var(--violet, #a86cf7) inset; }
+
+/* click-to-place centre picker, 16:9 like the picture it stands for */
+.zoom-pad {
+  position: relative; aspect-ratio: 16 / 9; width: 100%; margin-top: .35rem;
+  border: 1px solid var(--line, #2b2825); border-radius: 6px; cursor: crosshair;
+  background:
+    linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px) 0 0 / 100% 33.33%,
+    linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px) 0 0 / 33.33% 100%,
+    rgba(255,255,255,.02);
+}
+.zoom-dot {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--violet, #a86cf7); box-shadow: 0 0 0 3px rgba(168,108,247,.25);
+  pointer-events: none;
+}
+.rsn.click { color: #f3b04a; } .rsn.dwell { color: #7fd1b9; } .rsn.transcript { color: #a86cf7; }

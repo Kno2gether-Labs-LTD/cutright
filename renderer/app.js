@@ -48,6 +48,7 @@ async function boot() {
   });
   initTour();
   $('#btnHome').onclick = () => showHome();
+  $('#btnRecord').onclick = () => E.openRecorder();
   $('#btnWorkspace').onclick = () => openProjectMenu();
 }
 
@@ -240,6 +241,14 @@ function renderTimeline() {
     label: `−${(c.end - c.start).toFixed(1)}s`, title: `cut ${fmt(c.start)} → ${fmt(c.end)} (removed on export)`,
   })), 'cut');
 
+  // zooms — a push-in is a scale plus a centre, so show both at a glance
+  fillLane('#laneZooms', (project.zooms || []).map((z, i) => ({
+    i, start: z.start, dur: Math.max(0.2, z.dur || 1), cls: 'clip zoom', minW: 44,
+    label: `${(z.scale || 1.3).toFixed(2)}×`,
+    title: `zoom ${(z.scale || 1.3).toFixed(2)}× on (${(z.x ?? 0.5).toFixed(2)}, ${(z.y ?? 0.5).toFixed(2)})`
+         + ` · ${fmt(z.start)} → ${fmt(z.start + (z.dur || 1))}${z.source ? ' · ' + z.source : ''}`,
+  })), 'zoom');
+
   // audio (music + sfx share one lane, tagged)
   const la = $('#laneAudio'); la.innerHTML = '';
   const audio = project.audio || {};
@@ -321,6 +330,7 @@ function initTimelineInteraction() {
     }
   }, { passive: false });
 
+  $('#btnZoomSuggest').onclick = () => openZoomSuggestions();
   $('#btnZoomIn').onclick = () => setZoom(zoom * 1.5);
   $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
   $('#btnFit').onclick = () => { fitZoom(); renderTimeline(); $('#tlScroll').scrollLeft = 0; };
@@ -355,6 +365,7 @@ function elemOf(s) {
   if (s.kind === 'sfx') return project.audio?.sfx?.[s.index];
   if (s.kind === 'cut') return project.cuts?.[s.index];
   if (s.kind === 'overlay') return project.overlays?.[s.index];
+  if (s.kind === 'zoom') return project.zooms?.[s.index];
   return null;
 }
 
@@ -426,6 +437,7 @@ function renderInspector() {
   else if (sel.kind === 'scene') renderSceneInspector(box, e);
   else if (sel.kind === 'cut') renderCutInspector(box, e);
   else if (sel.kind === 'overlay') renderOverlayInspector(box, e);
+  else if (sel.kind === 'zoom') renderZoomInspector(box, e);
   else renderAudioInspector(box, e);
 }
 
@@ -556,12 +568,163 @@ function renderAudioInspector(box, e) {
   box.appendChild(hint('Layers are mixed under the voice and loudness-normalised on render. Ask Claude in the terminal to generate music or SFX and they appear here.'));
 }
 
+// A zoom is a push-in: how close, on what point, for how long. x/y are normalised 0..1 so the
+// same project survives a change of resolution.
+function addZoom() {
+  project.zooms = project.zooms || [];
+  project.zooms.push({ id: 'z' + Date.now(), start: +(video.currentTime || 0).toFixed(2),
+                       dur: 2, scale: 1.3, x: 0.5, y: 0.5, source: 'manual' });
+  project.zooms.sort((a, b) => a.start - b.start);
+  save(); renderTimeline();
+  select('zoom', project.zooms.findIndex((z) => z.source === 'manual' && z.start === +(video.currentTime || 0).toFixed(2)));
+}
+
+function renderZoomInspector(box, e) {
+  box.appendChild(rowOf([
+    field('Start (s)', e.start, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Length (s)', e.dur ?? 2, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+    field('Scale', e.scale ?? 1.3, (v) => { e.scale = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+
+  // Pick the centre by clicking the picture — far easier than typing two numbers.
+  const pad = document.createElement('div'); pad.className = 'zoom-pad';
+  const dot = document.createElement('div'); dot.className = 'zoom-dot';
+  const place = () => { dot.style.left = (e.x ?? 0.5) * 100 + '%'; dot.style.top = (e.y ?? 0.5) * 100 + '%'; };
+  pad.appendChild(dot); place();
+  pad.onclick = (ev) => {
+    const r = pad.getBoundingClientRect();
+    e.x = +clamp((ev.clientX - r.left) / r.width, 0, 1).toFixed(3);
+    e.y = +clamp((ev.clientY - r.top) / r.height, 0, 1).toFixed(3);
+    place(); save(); renderTimeline(); renderInspector();
+  };
+  const wrap = document.createElement('div'); wrap.className = 'field';
+  const lab = document.createElement('label'); lab.textContent = 'Centre — click where the push-in should land';
+  wrap.append(lab, pad);
+  box.appendChild(wrap);
+
+  box.appendChild(rowOf([
+    field('Centre x', e.x ?? 0.5, (v) => { e.x = +v; save(); renderTimeline(); }, 'number'),
+    field('Centre y', e.y ?? 0.5, (v) => { e.y = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  box.appendChild(btnRow(
+    btn('Preview', () => { video.currentTime = clamp(e.start - 0.5, 0, dur); video.play().catch(() => {});
+      setTimeout(() => video.pause(), ((e.dur || 2) + 1) * 1000); }),
+    btn('1.2× subtle', () => { e.scale = 1.2; save(); renderInspector(); renderTimeline(); }),
+    btn('1.5× punchy', () => { e.scale = 1.5; save(); renderInspector(); renderTimeline(); }),
+  ));
+  box.appendChild(hint('Zooms ramp in and out over half a second and are applied on export. They survive cuts — '
+    + 'a zoom whose moment gets trimmed away goes with it.'));
+}
+
+// ---------------------------------------------------------------- zoom suggestions
+// Recording watches the cursor, the clicks and the words. Those become suggestions, never
+// edits: the user (or the agent) decides which ones land.
+let zoomSuggest = { list: [] };
+
+function openZoomSuggestions() {
+  const s = project?.recording?.zoomSuggestions || [];
+  if (!s.length) {
+    setStatus(project?.recording
+      ? 'No zoom suggestions in this recording — add one with + on the Zooms track'
+      : 'Zoom suggestions come from a screen recording. Record one, or add a zoom with + on the track.', 'ok');
+    return;
+  }
+  // Anything already on the track is the track's business now; delete it there and it comes
+  // back here. So the list only ever shows what has not been applied.
+  const already = new Set((project.zooms || []).map((z) => z.id));
+  zoomSuggest.list = s.filter((z) => !already.has(z.id))
+                      .map((z) => ({ ...z, take: z.confidence !== 'low' }));
+  if (!zoomSuggest.list.length) {
+    setStatus(`All ${s.length} suggested zooms are already on the track`, 'ok');
+    return;
+  }
+  renderZoomSuggestPanel();
+}
+
+function renderZoomSuggestPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'zoom suggestions';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'zooms';
+  const when = document.createElement('span'); when.textContent = `${zoomSuggest.list.length} suggested`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const sum = document.createElement('div'); sum.className = 'ac-summary';
+  const counts = zoomSuggest.list.reduce((a, z) => { a[z.source] = (a[z.source] || 0) + 1; return a; }, {});
+  sum.innerHTML = `Selected <b>${zoomSuggest.list.filter((z) => z.take).length}</b> of ${zoomSuggest.list.length}`
+    + `<br><span class="dim">${Object.entries(counts).map(([k, v]) => `${v} from ${k}`).join(' · ') || 'no sources'}</span>`;
+  wrap.appendChild(sum);
+
+  const list = document.createElement('div'); list.className = 'ac-list';
+  zoomSuggest.list.forEach((z) => {
+    const row = document.createElement('div'); row.className = 'ac-item';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = z.take;
+    cb.onclick = (ev) => { ev.stopPropagation(); z.take = cb.checked; refreshZoomSuggestTotals(); };
+    const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(z.start);
+    const lbl = document.createElement('span'); lbl.className = 'lbl';
+    lbl.textContent = `${(z.scale || 1.3).toFixed(2)}× · ${(z.dur || 2).toFixed(1)}s${z.label ? ' · ' + z.label : ''}`;
+    const rsn = document.createElement('span'); rsn.className = 'rsn ' + z.source; rsn.textContent = z.source;
+    row.append(cb, t, lbl, rsn);
+    row.onclick = () => { video.currentTime = clamp(z.start - 0.6, 0, dur); video.play().catch(() => {});
+      setTimeout(() => video.pause(), ((z.dur || 2) + 1.2) * 1000); };
+    row.title = `${z.source} at ${z.start}s · ${z.confidence || 'medium'} confidence · click to watch it`;
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+
+  wrap.appendChild(btnRow(
+    btn('Select all', () => { zoomSuggest.list.forEach((z) => { z.take = true; });
+      document.querySelectorAll('.ac-item input').forEach((c) => { c.checked = true; }); refreshZoomSuggestTotals(); }),
+    btn('Select none', () => { zoomSuggest.list.forEach((z) => { z.take = false; });
+      document.querySelectorAll('.ac-item input').forEach((c) => { c.checked = false; }); refreshZoomSuggestTotals(); }),
+    btn(`Add ${zoomSuggest.list.filter((z) => z.take).length} zooms`, applyZoomSuggestions, 'primary'),
+  ));
+  wrap.appendChild(hint('These come from where you clicked, paused on something, or said something worth landing on. '
+    + 'Adding them puts real zooms on the track — edit or delete any of them afterwards.'));
+  box.appendChild(wrap);
+}
+
+function refreshZoomSuggestTotals() {
+  const taken = zoomSuggest.list.filter((z) => z.take);
+  const sum = $('#inspector .ac-summary');
+  if (sum) {
+    const counts = zoomSuggest.list.reduce((a, z) => { a[z.source] = (a[z.source] || 0) + 1; return a; }, {});
+    sum.innerHTML = `Selected <b>${taken.length}</b> of ${zoomSuggest.list.length}`
+      + `<br><span class="dim">${Object.entries(counts).map(([k, v]) => `${v} from ${k}`).join(' · ')}</span>`;
+  }
+  const add = [...document.querySelectorAll('#inspector button')].find((b) => /^Add /.test(b.textContent));
+  if (add) { add.textContent = `Add ${taken.length} zooms`; add.disabled = taken.length === 0; }
+}
+
+function applyZoomSuggestions() {
+  const taken = zoomSuggest.list.filter((z) => z.take);
+  if (!taken.length) return;
+  project.zooms = project.zooms || [];
+  const have = new Set(project.zooms.map((z) => z.id));
+  taken.forEach((z) => {
+    if (have.has(z.id)) return;
+    project.zooms.push({ id: z.id, start: z.start, dur: z.dur, scale: z.scale,
+                         x: z.x, y: z.y, source: z.source });
+  });
+  project.zooms.sort((a, b) => a.start - b.start);
+  zoomSuggest.list = zoomSuggest.list.filter((z) => !z.take);
+  save(); renderTimeline();
+  setStatus(`Added ${taken.length} zooms — export to see them`, 'ok');
+  renderZoomSuggestPanel();
+}
+
 function remove() {
   if (!sel) return;
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
   else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
+  else if (sel.kind === 'zoom') project.zooms.splice(sel.index, 1);
   else project.audio[sel.kind].splice(sel.index, 1);
   sel = null; save(); renderTimeline(); renderInspector();
 }
@@ -586,6 +749,7 @@ document.addEventListener('click', (ev) => {
     if (!project) return;
     if (k === 'overlay') return addOverlay();
     if (k === 'cut') return addCut();
+    if (k === 'zoom') return addZoom();
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({
@@ -665,6 +829,7 @@ async function showHome() {
     });
   }
 
+  $('#homeRecord').onclick = () => E.openRecorder();
   $('#homeNew').onclick = () => { $('#home').hidden = true; homeOpen = false; openNewProject(); };
   $('#homeOpen').onclick = () => E.chooseWorkspace().then((r) => r?.ok && E.reload());
   $('#homeTour').onclick = () => { $('#home').hidden = true; homeOpen = false; if (project) startTour(true); };
