@@ -354,6 +354,8 @@ function initTimelineInteraction() {
   $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
   $('#btnStartAgent').onclick = () => startAgentEdit();
   $('#btnAgentBrief').onclick = () => showAgentBrief();
+  $('#btnAgentPick').onclick = () => showAgentPicker();
+  refreshAgents();
 }
 
 // ---------------------------------------------------------------- selection + inspector
@@ -435,7 +437,7 @@ function renderInspector() {
       btn('Start a new project from a video…', () => openNewProject()),
       btn('Show me around', () => startTour(true)),
     ));
-    box.appendChild(hint('Tip: run claude in the terminal below and ask for an edit in plain English — it changes the same project you are looking at.'));
+    box.appendChild(hint('Tip: press “Edit my video” below and ask for an edit in plain English — it changes the same project you are looking at.'));
     return;
   }
 
@@ -1522,12 +1524,100 @@ function openLookPanel() {
 
 // ---------------------------------------------------------------- the agent hand-off
 // The UI records intent; the agent does the editing. These two buttons are the seam.
-function startAgentEdit() {
-  // Bypass mode by default: the agent is working inside the user's own project folder and
-  // a permission prompt per file edit makes the loop unusable. The user starts it knowingly.
-  E.term.write('claude --dangerously-skip-permissions\r');
-  setStatus('Starting the agent — then type what you want, e.g. “edit my video”', 'working');
-  setTimeout(() => E.term.write('Edit my video. Read CLAUDE.md and project.json first.\r'), 4000);
+async function startAgentEdit() {
+  // Which agent, and how it is started, is main's answer — the renderer never assembles a
+  // command line. Bypass mode where the agent supports it: it is working inside the user's own
+  // project folder and a permission prompt per file edit makes the loop unusable. The user
+  // starts it knowingly, from a button that says what it does.
+  const a = await E.agents.launch();
+  if (!a.available) {
+    setStatus(`${a.name} is not installed — choose another agent, or install it`, 'error');
+    showAgentPicker();
+    return;
+  }
+  E.term.write(a.command + '\r');
+  setStatus(`Starting ${a.name} — then type what you want, e.g. “edit my video”`, 'working');
+  setTimeout(() => E.term.write(a.kickoff + '\r'), 4000);
+}
+
+// ---------------------------------------------------------------- choosing the agent
+let agentCache = null;
+
+async function refreshAgents() {
+  try {
+    const r = await E.agents.list();
+    agentCache = r.agents || [];
+    const sel = agentCache.find((a) => a.selected) || agentCache[0];
+    const btn = $('#btnAgentPick');
+    if (btn && sel) {
+      btn.textContent = sel.name + ' ▾';
+      // Say it plainly when the selected agent is not actually installed, rather than letting
+      // the launch button fail into a "command not found" in the terminal.
+      btn.classList.toggle('warn', !sel.available);
+      btn.title = sel.available
+        ? `${sel.name}${sel.version ? ' — ' + sel.version : ''} · reads ${sel.doc}`
+        : `${sel.name} is not installed — pick another agent, or install it`;
+    }
+    return agentCache;
+  } catch { return []; }
+}
+
+async function showAgentPicker() {
+  const agents = await refreshAgents();
+  const box = $('#inspector'); box.innerHTML = '';
+  box.appendChild(sechead('Which agent edits'));
+  box.appendChild(hint('Cutright writes what it knows into project.json and mirrors it into the '
+    + 'file each agent reads on its own, so the brief, the templates and the render commands work '
+    + 'the same whichever you pick. Claude Code is the default because it is what this was built '
+    + 'against; anything you already have is selectable.'));
+
+  const list = document.createElement('div'); list.className = 'agent-list';
+  agents.forEach((a) => {
+    const row = document.createElement('button');
+    row.className = 'agent-row' + (a.selected ? ' sel' : '') + (a.available ? '' : ' off');
+    row.disabled = !a.available;
+
+    const top = document.createElement('span'); top.className = 'ag-top';
+    const nm = document.createElement('span'); nm.className = 'ag-name'; nm.textContent = a.name;
+    top.appendChild(nm);
+    if (a.selected) { const t = document.createElement('span'); t.className = 'ag-badge'; t.textContent = 'in use'; top.appendChild(t); }
+    if (!a.verified) { const t = document.createElement('span'); t.className = 'ag-badge ag-soft'; t.textContent = 'untested here'; top.appendChild(t); }
+
+    const sub = document.createElement('span'); sub.className = 'ag-sub';
+    sub.textContent = a.available
+      ? [a.vendor, a.version, 'reads ' + a.doc].filter(Boolean).join(' · ')
+      : `${a.vendor} · not installed`;
+
+    row.append(top, sub);
+    if (!a.available) {
+      const how = document.createElement('span'); how.className = 'ag-install';
+      how.textContent = a.install;
+      row.appendChild(how);
+    }
+    row.onclick = async () => {
+      if (!a.available) return;
+      await E.agents.set(a.id);
+      setStatus(`${a.name} will do the editing`, 'ok');
+      showAgentPicker();
+    };
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+
+  const sel = agents.find((a) => a.selected);
+  if (sel?.mcp === 'manual' && sel.mcpNote) {
+    box.appendChild(sep());
+    box.appendChild(sechead('Sound, with this agent'));
+    box.appendChild(hint(sel.mcpNote));
+    if (sel.mcpCommand) {
+      const pre = document.createElement('div'); pre.className = 'ag-cmd'; pre.textContent = sel.mcpCommand;
+      box.appendChild(pre);
+    }
+  } else if (sel?.mcp === 'auto') {
+    box.appendChild(sep());
+    box.appendChild(hint('Saving an ElevenLabs key wires the MCP server for this agent automatically — '
+      + 'the key stays in the keychain and never lands in the project folder.'));
+  }
 }
 
 async function showAgentBrief() {

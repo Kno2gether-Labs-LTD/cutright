@@ -35,6 +35,8 @@ jobs:
         run: node scripts/check-keys.mjs
       - name: MCP wiring (the key never lands in .mcp.json)
         run: node scripts/check-mcp.mjs
+      - name: Agents (only what is installed is offered)
+        run: node scripts/check-agents.mjs
       - name: Library (recordings show up as projects, labelled)
         run: node scripts/check-library.mjs
       - name: Signing (the app keeps one identity across rebuilds)

@@ -354,7 +354,7 @@ change it — edit \`project.json\` → \`brief.intent\` to tell the agent what 
 }
 
 // Write both files. Idempotent: safe to call on every project open.
-export function writeAgentFiles({ work, template, appVersion, templatesDir, enginePath }) {
+export function writeAgentFiles({ work, template, appVersion, templatesDir, enginePath, docs = [] }) {
   const projectFile = join(work, 'project.json');
   if (!existsSync(projectFile)) return { ok: false, error: 'no project.json' };
   const project = JSON.parse(readFileSync(projectFile, 'utf8'));
@@ -365,11 +365,13 @@ export function writeAgentFiles({ work, template, appVersion, templatesDir, engi
   project.brief = brief;
   writeFileSync(projectFile, JSON.stringify(project, null, 2));
 
-  // Both filenames, same body: CLAUDE.md is what Claude Code auto-reads, AGENTS.md is the
-  // neutral convention other agents follow. One source, so they cannot drift.
+  // Same body under every filename an agent might read on its own, so whichever one the user
+  // picked finds the brief without being pointed at it. One source, so they cannot drift.
+  // CLAUDE.md is Claude Code's; AGENTS.md is the convention Codex, Kimi Code, goose, opencode
+  // and Cursor all follow; `docs` carries anything else the selected agent needs (GEMINI.md).
   const doc = agentDoc({ brief, project, appVersion });
-  writeFileSync(join(work, 'CLAUDE.md'), doc);
-  writeFileSync(join(work, 'AGENTS.md'), doc);
+  const names = new Set(['CLAUDE.md', 'AGENTS.md', ...docs]);
+  for (const n of names) writeFileSync(join(work, n), doc);
   return { ok: true, template: template.id, presets: brief.capabilities.overlays.length,
            sceneTypes: brief.capabilities.scenes.length };
 }

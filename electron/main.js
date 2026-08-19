@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { writeAgentFiles } from './brief.mjs';
 import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
 import { listLibrary } from './library.mjs';
+import { listAgents, byId as agentById, launchCommand, kickoffPrompt, resolveBin, DEFAULT_AGENT } from './agents.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -124,7 +125,8 @@ function refreshAgentBrief() {
     const t = listTemplates().find((x) => x.id === wanted) || listTemplates()[0];
     if (!t) return;
     writeAgentFiles({ work: settings.work, template: t, appVersion: app.getVersion(),
-      templatesDir: join(RES, 'templates'), enginePath: settings.engine });
+      templatesDir: join(RES, 'templates'), enginePath: settings.engine,
+      docs: [agentById(settings.agent || DEFAULT_AGENT).doc] });
   } catch (e) { log('brief refresh skipped:', e.message); }
 }
 
@@ -1021,6 +1023,28 @@ function registerIpc() {
     skipHome: (() => { const v = openEditorNext; openEditorNext = false; return v; })(),
     version: app.getVersion(), platform: process.platform, dev: isDev,
   }));
+
+  // Which coding agent does the editing. Everything the app writes is agent-neutral — the brief
+  // goes into AGENTS.md as well as CLAUDE.md — so this is a choice, not a port.
+  ipcMain.handle('agents:list', () => ({
+    agents: listAgents({ env: process.env, selected: settings.agent || DEFAULT_AGENT }),
+    selected: settings.agent || DEFAULT_AGENT,
+  }));
+  ipcMain.handle('agents:set', (_e, id) => {
+    const a = agentById(String(id || ''));
+    settings.agent = a.id;
+    saveSettings();
+    refreshAgentBrief();                       // the new agent may read a different filename
+    return { ok: true, id: a.id, launch: launchCommand(a.id), doc: a.doc };
+  });
+  ipcMain.handle('agents:launch', () => {
+    const id = settings.agent || DEFAULT_AGENT;
+    const a = agentById(id);
+    // Report whether it is actually there. Typing a command for a missing binary would put a
+    // "command not found" in the terminal and leave the user to work out why.
+    return { id, command: launchCommand(id), kickoff: kickoffPrompt(id), doc: a.doc,
+             name: a.name, available: !!resolveBin(a.bin, process.env), install: a.install };
+  });
 
   // What the Home screen lists: projects the user has opened, plus recordings the app made and
   // put in ~/Movies/Cutright, which would otherwise only be findable in Finder.

@@ -1142,6 +1142,48 @@ export async function runEditTests({ win, settings, app }) {
     return { added: added.length, x: z.x, y: z.y, start: z.start };
   });
 
+  await test('agent: the picker lists what is installed and greys out the rest', async () => {
+    await js(`document.querySelector('#btnAgentPick').click()`);
+    await wait(500);
+    const seen = await js(`(() => ({
+      rows: document.querySelectorAll('.agent-row').length,
+      disabled: document.querySelectorAll('.agent-row:disabled').length,
+      selected: document.querySelector('.agent-row.sel .ag-name')?.textContent || null,
+      label: document.querySelector('#btnAgentPick').textContent,
+      installHints: document.querySelectorAll('.agent-row.off .ag-install').length,
+    }))()`);
+    expect(seen.rows >= 4, `the picker listed ${seen.rows} agents`);
+    // Claude Code is the default and is what this machine builds against, so it must be usable.
+    expect(seen.selected === 'Claude Code', `selected agent is ${seen.selected}, expected Claude Code`);
+    expect(/Claude Code/.test(seen.label), 'the header button does not name the agent in use');
+    // Whatever is greyed out must say how to get it — a dead end is worse than no option.
+    expect(seen.disabled === seen.installHints,
+      `${seen.disabled} agents are unavailable but ${seen.installHints} say how to install`);
+    return seen;
+  });
+
+  await test('agent: choosing another agent writes the file that agent reads', async () => {
+    const before = readFileSync(join(settings.work, 'CLAUDE.md'), 'utf8');
+    const agents = await js(`(async () => (await window.editor.agents.list()).agents)()`, true);
+    const other = (agents || []).find((a) => a.available && a.id !== 'claude');
+    if (!other) return { skipped: 'no second agent installed on this machine' };
+
+    await js(`(async () => { await window.editor.agents.set('${other.id}'); })()`, true);
+    await settle();
+    // The brief must land in the file the chosen agent opens by itself, or it starts up blind.
+    const doc = join(settings.work, other.doc);
+    expect(existsSync(doc), `${other.doc} was not written after choosing ${other.name}`);
+    expect(readFileSync(doc, 'utf8') === before, `${other.doc} does not carry the same brief`);
+    // and the launch line is the agent's own, not Claude's
+    const launch = await js(`(async () => (await window.editor.agents.launch()))()`, true);
+    expect(launch.command.startsWith(other.bin), `launch command was ${launch.command}`);
+    expect(launch.kickoff.includes(other.doc), `kickoff points at the wrong file: ${launch.kickoff}`);
+
+    await js(`(async () => { await window.editor.agents.set('claude'); })()`, true);
+    await settle();
+    return { switchedTo: other.id, doc: other.doc, command: launch.command };
+  });
+
   await test('zooms: suggestions from a recording become real zooms when accepted', async () => {
     // stand in for a recording: the review panel reads recording.zoomSuggestions, whatever wrote it
     const p = disk();

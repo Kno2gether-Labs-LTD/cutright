@@ -261,7 +261,7 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
       await win.webContents.executeJavaScript('hideHome()').catch(() => {});
       await wait(300);
       const buttons = { transcript: '#btnTranscriptEdit', templates: '#btnTemplates',
-                        autocut: '#btnAutoCut', look: '#btnLook' };
+                        autocut: '#btnAutoCut', look: '#btnLook', agent: '#btnAgentPick' };
       const sel = buttons[panel];
       if (sel) {
         await win.webContents.executeJavaScript(`document.querySelector('${sel}')?.click()`);

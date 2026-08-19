@@ -32,7 +32,8 @@
     "check:mcp": "node scripts/check-mcp.mjs",
     "check:signing": "node scripts/check-signing.mjs",
     "signing:local": "bash scripts/setup-signing.sh local",
-    "check:library": "node scripts/check-library.mjs"
+    "check:library": "node scripts/check-library.mjs",
+    "check:agents": "node scripts/check-agents.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
