@@ -7,6 +7,7 @@
 //   hyperframes  npx hyperframes render <dir> --composition <file> --format mov --variables '{…}'
 //   remotion     npx remotion render <entry> <id> <out> --codec prores --prores-profile 4444 --props '{…}'
 const { spawn } = require('node:child_process');
+const { runWatched } = require('./run-watched.cjs');
 const { existsSync, mkdirSync, statSync, renameSync, unlinkSync } = require('node:fs');
 const { join, dirname } = require('node:path');
 
@@ -24,21 +25,18 @@ process.parentPort.on('message', async (e) => {
 });
 
 function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { env: process.env, ...opts });
-    let tail = '';
-    const feed = (d) => {
-      const s = String(d); tail = (tail + s).slice(-3000);
-      s.split('\n').forEach((line) => {
-        const m = /(\d{1,3})%/.exec(line);
-        if (m) progress(line.trim().slice(0, 100), Number(m[1]));
-        else if (line.trim() && /render|encod|captur|assembl|bundl/i.test(line)) progress(line.trim().slice(0, 100));
-      });
-    };
-    p.stdout?.on('data', feed);
-    p.stderr?.on('data', feed);
-    p.on('error', reject);
-    p.on('close', (code) => (code === 0 ? resolve(tail) : reject(new Error(`${cmd} exited ${code}: ${tail.slice(-400)}`))));
+  // npx may be fetching a package over a slow link before it prints anything, so give it room —
+  // but never forever. A wedged renderer must fail loudly, not leave a bar at 40%.
+  return runWatched(cmd, args, {
+    stallMs: cmd === 'npx' ? 300_000 : 180_000,
+    capMs: 30 * 60_000,
+    onStall: (idle) => progress(`still working — nothing back from ${cmd} for ${Math.round(idle / 1000)}s`),
+    onLine: (line) => {
+      const m = /(\d{1,3})%/.exec(line);
+      if (m) progress(line.trim().slice(0, 100), Number(m[1]));
+      else if (/render|encod|captur|assembl|bundl/i.test(line)) progress(line.trim().slice(0, 100));
+    },
+    ...opts,
   });
 }
 

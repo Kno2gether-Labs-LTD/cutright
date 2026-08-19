@@ -125,7 +125,7 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
 
     if (want.includes('edit')) {
       const { runEditTests } = await import('./selftest.mjs');
-      const r = await runEditTests({ win, settings });
+      const r = await runEditTests({ win, settings, app });
       check('editSuite', { passed: r.passed, total: r.total, skipped: r.skipped,
         tags: process.env.CVE_TEST_TAGS || 'all',
         failures: r.results.filter((x) => !x.pass).map((x) => `${x.name}: ${x.error}`) });

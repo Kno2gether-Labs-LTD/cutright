@@ -8,6 +8,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, Menu, utilityProcess, MessageChannelMain, safeStorage, desktopCapturer, systemPreferences, screen } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
+import { makeKeyStore } from './keys.mjs';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { writeAgentFiles } from './brief.mjs';
@@ -710,29 +711,15 @@ function renderPreset(webContents, opts = {}) {
 }
 
 // ---------------------------------------------------------------- API keys
-// Remote transcription needs a key. It is encrypted with the OS keychain (safeStorage)
-// and only ever leaves main to go to the provider — never to the renderer.
-function setApiKey(provider, value) {
-  settings.keys = settings.keys || {};
-  if (!value) { delete settings.keys[provider]; saveSettings(); return { ok: true, cleared: true }; }
-  try {
-    settings.keys[provider] = safeStorage.isEncryptionAvailable()
-      ? { enc: safeStorage.encryptString(value).toString('base64') }
-      : { plain: value };            // no keychain (rare): still works, clearly marked
-    saveSettings();
-    return { ok: true, encrypted: !!settings.keys[provider].enc };
-  } catch (e) { return { ok: false, error: e.message }; }
-}
-function getApiKey(provider) {
-  const k = settings.keys?.[provider];
-  if (!k) return process.env[provider === 'openai' ? 'OPENAI_API_KEY' : 'ELEVENLABS_API_KEY'] || '';
-  if (k.plain) return k.plain;
-  try { return safeStorage.decryptString(Buffer.from(k.enc, 'base64')); } catch { return ''; }
-}
-const knownKeys = () => ({
-  openai: !!getApiKey('openai'), elevenlabs: !!getApiKey('elevenlabs'),
-  keychain: safeStorage.isEncryptionAvailable(),
-});
+// Remote transcription needs a key. It is encrypted with the OS keychain (safeStorage) and only
+// ever leaves main to go to the provider — never to the renderer. The rules live in keys.mjs
+// so they can be tested without an app; the one that matters is that asking whether a key
+// exists must not decrypt it (see the note there).
+const keyStore = makeKeyStore({ safeStorage, getSettings: () => settings, save: () => saveSettings() });
+const setApiKey = (provider, value) => keyStore.set(provider, value);
+const getApiKey = (provider) => keyStore.get(provider);
+const hasApiKey = (provider) => keyStore.has(provider);
+const knownKeys = () => keyStore.known();
 
 // ---------------------------------------------------------------- transcription
 function transcribeMedia(webContents, opts = {}) {
@@ -1008,7 +995,7 @@ function registerIpc() {
     const has = (b) => !!which(b);
     return {
       hyperframes: has('npx'), 'whisper-cli': has('whisper-cli'),
-      openai: !!getApiKey('openai'), elevenlabs: !!getApiKey('elevenlabs'),
+      openai: hasApiKey('openai'), elevenlabs: hasApiKey('elevenlabs'),
       keys: knownKeys(),
     };
   });

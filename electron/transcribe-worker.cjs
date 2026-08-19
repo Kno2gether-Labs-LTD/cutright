@@ -12,6 +12,7 @@
 // Whatever the engine, the output is normalised to [{ text, start, end }] so nothing
 // downstream has to care which one ran.
 const { spawn } = require('node:child_process');
+const { runWatched } = require('./run-watched.cjs');
 const { readFileSync, writeFileSync, existsSync, statSync, copyFileSync, unlinkSync } = require('node:fs');
 const { join, basename } = require('node:path');
 
@@ -33,14 +34,12 @@ process.parentPort.on('message', async (e) => {
 });
 
 function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { env: process.env, ...opts });
-    let out = '', err = '';
-    p.stdout?.on('data', (d) => { out += d; if (opts.onLine) String(d).split('\n').forEach(opts.onLine); });
-    p.stderr?.on('data', (d) => { err += d; if (opts.onLine) String(d).split('\n').forEach(opts.onLine); });
-    p.on('error', reject);
-    p.on('close', (code) => (code === 0 ? resolve({ out, err })
-      : reject(new Error(`${basename(cmd)} exited ${code}: ${(err || out).slice(-400)}`))));
+  // A model download can be quiet for a while; a wedged one is quiet forever. Draw the line.
+  return runWatched(cmd, args, {
+    stallMs: cmd === 'ffmpeg' ? 180_000 : 420_000,
+    capMs: 60 * 60_000,                                   // a long video legitimately takes a while
+    onStall: (idle) => progress('transcribing', `still going — nothing from ${basename(cmd)} for ${Math.round(idle / 1000)}s`),
+    ...opts,
   });
 }
 

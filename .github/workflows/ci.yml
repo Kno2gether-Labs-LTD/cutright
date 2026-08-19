@@ -31,6 +31,8 @@ jobs:
           python3 -m py_compile engine/*.py
       - name: Licence guard — no bundled ffmpeg
         run: node scripts/check-licence-posture.mjs
+      - name: API key store (presence must never decrypt)
+        run: node scripts/check-keys.mjs
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit reported findings"
 

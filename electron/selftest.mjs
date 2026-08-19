@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function runEditTests({ win, settings }) {
+export async function runEditTests({ win, settings, app }) {
   const wc = win.webContents;
   const projectFile = settings.work + '/project.json';
   const backup = readFileSync(projectFile, 'utf8');
@@ -898,6 +898,26 @@ export async function runEditTests({ win, settings }) {
     expect(r.sawKey === true, 'stored key was not detected');
     expect(r.stillThere === false, 'clearing the key did not work');
     expect(r.readable.length === 0, 'the bridge exposes a key getter: ' + r.readable.join(','));
+    return r;
+  });
+
+  await test('transcribe: the engine list reports a stored key without unlocking it', async () => {
+    // The rule (presence must never decrypt) is enforced and proved in scripts/check-keys.mjs,
+    // where safeStorage can be made to scream when touched. What this checks is that the real
+    // app is wired to that rule: a key stored through the UI shows up in the panel, and the
+    // panel opening does not hang — which is what a keychain dialog behind the window looks like.
+    const r = await js(`(async () => {
+      const t0 = Date.now();
+      await window.editor.transcribe.setKey('openai', 'sk-selftest-presence');
+      const listed = await window.editor.transcribe.engines();
+      const ms = Date.now() - t0;
+      await window.editor.transcribe.setKey('openai', '');
+      const after = await window.editor.transcribe.engines();
+      return { present: listed.openai, cleared: after.openai, keychain: listed.keys?.keychain, ms };
+    })()`, true);
+    expect(r.present === true, 'a stored key was not reported as present');
+    expect(r.cleared === false, 'clearing the key did not take effect');
+    expect(r.ms < 3000, `listing engines took ${r.ms}ms — something blocked main (a keychain dialog?)`);
     return r;
   });
 

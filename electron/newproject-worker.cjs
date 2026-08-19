@@ -6,6 +6,7 @@
 //
 // Steps: probe → normalise/grade → transcribe → build project.json
 const { spawn } = require('node:child_process');
+const { runWatched } = require('./run-watched.cjs');
 const { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } = require('node:fs');
 const { join, basename, extname } = require('node:path');
 
@@ -23,18 +24,11 @@ process.parentPort.on('message', async (e) => {
 });
 
 function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { env: process.env, ...opts });
-    let tail = '';
-    const feed = (d) => {
-      const s = String(d); tail = (tail + s).slice(-4000);
-      if (opts.onLine) s.split('\n').forEach(opts.onLine);
-    };
-    p.stdout?.on('data', feed);
-    p.stderr?.on('data', feed);
-    p.on('error', reject);
-    p.on('close', (code) => (code === 0 ? resolve(tail)
-      : reject(new Error(`${basename(cmd)} failed (${code}): ${tail.slice(-400)}`))));
+  return runWatched(cmd, args, {
+    stallMs: cmd === 'npx' ? 420_000 : 180_000,           // npx may be fetching before it speaks
+    capMs: 60 * 60_000,
+    onStall: (idle) => progress('working', `nothing back from ${basename(cmd)} for ${Math.round(idle / 1000)}s`),
+    ...opts,
   });
 }
 
