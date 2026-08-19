@@ -1346,6 +1346,47 @@ export async function runEditTests({ win, settings, app }) {
     return { short: [short.dur, short.durWhy], wordy: [wordy.dur, wordy.durWhy] };
   });
 
+
+  await test('check: the verifier finds what a render would silently drop', async () => {
+    const p = disk();
+    const keepScenes = p.scenes;
+    // plant one fault of each kind the engine punishes silently
+    p.cuts = [...(p.cuts || []), { start: at(0.5), end: at(0.6) }];
+    p.scenes = [{ id: 'straddler', type: 'pills', start: at(0.48), dur: at(0.2),
+                  headline: 'DROPPED', items: [] }];
+    p.zooms = [{ id: 'badz', start: at(0.1), dur: 1, scale: 1.3, x: 2.5, y: 0.5 }];
+    await writeProject(p);
+
+    const bad = await js(`window.editor.verify()`, true);
+    expect(bad && !bad.error, 'the verifier would not run: ' + bad?.error);
+    expect(bad.ok === false, 'a project with a scene inside a cut was reported as fine');
+    const kinds = bad.issues.map((i) => i.what.toLowerCase()).join(' | ');
+    expect(/straddles a cut/.test(kinds), 'it missed the scene the render would drop: ' + kinds);
+    expect(/not between 0 and 1/.test(kinds), 'it missed the zoom centre written in pixels: ' + kinds);
+    expect(bad.issues.every((i) => i.fix && i.fix.length > 8),
+      'an issue says what is wrong but not what to do about it');
+
+    // the panel must show them, not just the count
+    await js(`document.querySelector('#btnVerify').click()`);
+    await wait(700);
+    const shown = await js(`(() => ({ badge: document.querySelector('#selBadge').textContent,
+      rows: document.querySelectorAll('#inspector .ac-item').length }))()`);
+    expect(shown.badge === 'check' && shown.rows >= 2,
+      'the check panel did not list the problems: ' + JSON.stringify(shown));
+
+    // Put the planted faults back and confirm they are gone. Not "zero issues": earlier tests
+    // leave their own cuts and scenes in this workspace, and some of those genuinely do clash —
+    // asserting a clean bill of health here would be asserting something untrue.
+    p.cuts = (p.cuts || []).filter((c) => c.start !== at(0.5));
+    p.scenes = keepScenes; delete p.zooms;
+    await writeProject(p);
+    const good = await js(`window.editor.verify()`, true);
+    const still = good.issues.map((i) => `${i.what} ${i.detail}`).join(' | ');
+    expect(!/straddler/.test(still), 'the straddling scene is still reported after being removed');
+    expect(!/badz|not between 0 and 1/.test(still), 'the bad zoom is still reported after being removed');
+    return { caught: bad.errors, warnings: bad.warnings, rows: shown.rows, leftOver: good.errors };
+  });
+
   // ---------------------------------------------------------------- security
   await test('security: cve:// refuses a path outside the workspace', async () => {
     const r = await js(`(async () => {

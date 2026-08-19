@@ -517,3 +517,7 @@ select:focus { outline: none; border-color: #46506a; }
 }
 .corner-cell:hover { color: var(--ink, #f5f3ee); }
 .corner-cell.on { color: #0a0a09; background: #6fd1b9; border-color: #6fd1b9; }
+
+/* severity in the check panel */
+.rsn.error { color: #f2789a; }
+.rsn.warn  { color: #f3b04a; }

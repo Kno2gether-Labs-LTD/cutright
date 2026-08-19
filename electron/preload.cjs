@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld('editor', {
       return () => ipcRenderer.removeListener('prepare:port', onPort);
     },
   },
+  verify: () => ipcRenderer.invoke('project:verify'),
   autoCut: (o = {}) => ipcRenderer.invoke('analysis:autocut', {
     noiseDb: num(o.noiseDb, -32), minSilence: num(o.minSilence, 0.7), pad: num(o.pad, 0.12),
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,

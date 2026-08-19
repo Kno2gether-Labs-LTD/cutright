@@ -25,7 +25,8 @@
     "check:zoom": "node scripts/check-zoom-geometry.mjs",
     "check:keys": "node scripts/check-keys.mjs",
     "check:framing": "node scripts/check-framing.mjs",
-    "check:pacing": "node scripts/check-pacing.mjs"
+    "check:pacing": "node scripts/check-pacing.mjs",
+    "check:verify": "node scripts/check-verify.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

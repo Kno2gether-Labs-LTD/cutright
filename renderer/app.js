@@ -342,6 +342,7 @@ function initTimelineInteraction() {
   }, { passive: false });
 
   $('#btnPrepare').onclick = () => runPrepare();
+  $('#btnVerify').onclick = () => runVerify();
   $('#btnZoomSuggest').onclick = () => openZoomSuggestions();
   $('#btnZoomIn').onclick = () => setZoom(zoom * 1.5);
   $('#btnZoomOut').onclick = () => setZoom(zoom / 1.5);
@@ -1740,6 +1741,54 @@ async function runTranscribe() {
   });
   const r = await E.transcribe.start(stt.opts);
   if (r?.error) { stt.busy = false; off(); setStatus('Transcribe failed: ' + r.error, 'error'); renderTranscribePanel(); }
+}
+
+// ---------------------------------------------------------------- check
+// The same verifier the agent is told to run before it says it is finished. A render takes
+// minutes to reveal that a scene straddling a cut was dropped; this takes a second.
+async function runVerify() {
+  if (!project) return;
+  setStatus('Checking the edit…', 'working');
+  const r = await E.verify();
+  if (r?.error) return setStatus('Check failed: ' + r.error, 'error');
+
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'check';
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'check';
+  const when = document.createElement('span');
+  when.textContent = r.ok ? 'nothing to fix' : `${r.errors} to fix · ${r.warnings} to consider`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const sum = document.createElement('div'); sum.className = 'ac-summary';
+  sum.innerHTML = r.ok
+    ? 'Nothing will be silently dropped: no element straddles a cut, no two panels share the card, '
+      + 'every file it refers to is there.'
+    : `<b>${r.errors}</b> thing(s) a render would get wrong · <b>${r.warnings}</b> worth a look`;
+  wrap.appendChild(sum);
+
+  if (r.issues?.length) {
+    const list = document.createElement('div'); list.className = 'ac-list';
+    r.issues.forEach((i) => {
+      const row = document.createElement('div'); row.className = 'ac-item';
+      const t = document.createElement('span'); t.className = 't'; t.textContent = i.severity === 'error' ? '✗' : '!';
+      const lbl = document.createElement('span'); lbl.className = 'lbl';
+      lbl.textContent = `${i.what} — ${i.detail}`;
+      const rsn = document.createElement('span'); rsn.className = 'rsn ' + i.severity; rsn.textContent = i.severity;
+      row.append(t, lbl, rsn);
+      row.title = 'Fix: ' + i.fix;
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+    wrap.appendChild(hint('Hover any line for what to do about it. Claude runs this same check '
+      + 'before it says an edit is finished.'));
+  }
+  box.appendChild(wrap);
+  setStatus(r.ok ? 'Check passed' : `Check found ${r.errors} error(s)`, r.ok ? 'ok' : 'error');
 }
 
 // ---------------------------------------------------------------- prepare (structural pass)

@@ -590,6 +590,24 @@ function registerRecordingIpc() {
     return { id };
   });
 
+  // The same verifier the agent runs, from the toolbar — one spawn, no worker needed.
+  ipcMain.handle('project:verify', async () => {
+    if (!settings.work) return { error: 'no project open' };
+    return new Promise((resolve) => {
+      const py = spawn(settings.python || 'python3',
+        [join(settings.engine, 'verify_project.py'), '--project', projectPath(), '--json'],
+        { cwd: settings.work, env: process.env });
+      let out = '', err = '';
+      py.stdout.on('data', (d) => (out += d));
+      py.stderr.on('data', (d) => (err += d));
+      py.on('error', (e) => resolve({ error: e.message }));
+      py.on('close', () => {
+        try { resolve(JSON.parse(out)); }
+        catch { resolve({ error: (err || out || 'the verifier said nothing').slice(-300) }); }
+      });
+    });
+  });
+
   ipcMain.handle('rec:privacy', () => {
     // Deep-links straight to Privacy & Security → Screen Recording.
     if (process.platform === 'darwin') {

@@ -153,6 +153,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       previewRange: `python3 "${enginePath}/render_project.py" --project project.json --range <start> <end> --out preview.mp4`,
       export: `python3 "${enginePath}/render_project.py" --project project.json --out FINAL.mp4`,
       transcribe: 'npx hyperframes transcribe <audio-or-video> --json -d .',
+      verify: `python3 "${enginePath}/verify_project.py" --project project.json`,
       sfx: `python3 "${enginePath}/audio_agent.py" sfx --prompt "<sound>" --at <seconds> --dur 2 --project project.json`,
     },
 
@@ -195,6 +196,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       'A framing move HOLDS until the next one. Write the move back to full, or it never comes back.',
       'Preview a range before exporting: a full export of a long video takes minutes.',
       'The user may be editing at the same time. Re-read project.json before writing, and keep your changes additive.',
+      'Run the verifier before you say you are finished. It is the difference between "done" and "rendered, watched, and wrong".',
     ],
   };
 }
@@ -269,7 +271,15 @@ the same way. Match the template's tokens (${Object.entries(t.tokens || {}).filt
    If this project came from a screen recording, \`recording.zoomSuggestions[]\` already lists
    candidates from clicks, cursor dwell and the words. Copy across the ones that earn it.
 8. **Finish.** Set \`grade.look\` and \`audio.polish\` if the brief asks for a mood.
-9. **Check your work.** Render a range preview over two or three of your changes and confirm
+9. **Check your work.** Run the verifier first — it finds in a second what a render finds in
+   twenty minutes: a scene straddling a cut (silently dropped), two panels sharing the card, a
+   framing move inside a cut, a zoom centre written in pixels, a missing overlay file.
+
+   \`\`\`bash
+   ${brief.commands.verify}
+   \`\`\`
+
+   Then render a range preview over two or three of your changes and confirm
    they land where you intended. Then tell the user what you changed and what you left alone.
 
 Do not run a full export unless the user asks — that is their call.
