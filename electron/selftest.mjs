@@ -886,18 +886,32 @@ export async function runEditTests({ win, settings, app }) {
 
   await test('transcribe: API keys round-trip through the OS keychain, never back to the page', async () => {
     const r = await js(`(async () => {
+      const t0 = Date.now();
       const set = await window.editor.transcribe.setKey('openai', 'sk-test-selftest-123');
+      const saveMs = Date.now() - t0;
       const after = await window.editor.transcribe.engines();
       const cleared = await window.editor.transcribe.setKey('openai', '');
       const final = await window.editor.transcribe.engines();
       // the bridge must expose no way to read a key back
       const readable = Object.keys(window.editor.transcribe).filter(k => /get|read|key/i.test(k) && k !== 'setKey');
-      return { set, sawKey: after.openai, cleared, stillThere: final.openai, readable, keychain: after.keys?.keychain };
+      return { set, saveMs, sawKey: after.openai, cleared, stillThere: final.openai, readable };
     })()`, true);
-    expect(r.set?.ok === true, 'could not store a key');
+    expect(r.readable.length === 0, 'the bridge exposes a key getter: ' + r.readable.join(','));
+
+    // A machine can legitimately refuse: an ad-hoc signed build whose signature changed since a
+    // key was stored makes macOS hold the keychain indefinitely. What must never happen is the
+    // app waiting with it, or a secret being written somewhere unencrypted as a consolation.
+    expect(r.saveMs < 20000, `saving a key took ${r.saveMs}ms — the keychain call is not bounded`);
+    if (r.set?.ok !== true) {
+      expect(/keychain/i.test(r.set?.error || ''), 'saving failed for an unexplained reason: ' + r.set?.error);
+      const settingsFile = join(app.getPath('userData'), 'settings.json');
+      const raw = existsSync(settingsFile) ? readFileSync(settingsFile, 'utf8') : '';
+      expect(!raw.includes('sk-test-selftest-123'), 'the key was written in the clear after encryption failed!');
+      return { refusedCleanly: true, error: r.set.error, saveMs: r.saveMs };
+    }
+
     expect(r.sawKey === true, 'stored key was not detected');
     expect(r.stillThere === false, 'clearing the key did not work');
-    expect(r.readable.length === 0, 'the bridge exposes a key getter: ' + r.readable.join(','));
     return r;
   });
 
@@ -907,17 +921,19 @@ export async function runEditTests({ win, settings, app }) {
     // app is wired to that rule: a key stored through the UI shows up in the panel, and the
     // panel opening does not hang — which is what a keychain dialog behind the window looks like.
     const r = await js(`(async () => {
+      const saved = await window.editor.transcribe.setKey('openai', 'sk-selftest-presence');
       const t0 = Date.now();
-      await window.editor.transcribe.setKey('openai', 'sk-selftest-presence');
       const listed = await window.editor.transcribe.engines();
-      const ms = Date.now() - t0;
+      const ms = Date.now() - t0;                       // the part that must never touch the keychain
       await window.editor.transcribe.setKey('openai', '');
       const after = await window.editor.transcribe.engines();
-      return { present: listed.openai, cleared: after.openai, keychain: listed.keys?.keychain, ms };
+      return { saved, present: listed.openai, cleared: after.openai, keychain: listed.keys?.keychain, ms };
     })()`, true);
+    // Listing must be instant whether or not the key could be stored — that is the whole point.
+    expect(r.ms < 3000, `listing engines took ${r.ms}ms — something blocked main (the keychain?)`);
+    if (r.saved?.ok !== true) return { keychainRefused: r.saved?.error, listMs: r.ms };
     expect(r.present === true, 'a stored key was not reported as present');
     expect(r.cleared === false, 'clearing the key did not take effect');
-    expect(r.ms < 3000, `listing engines took ${r.ms}ms — something blocked main (a keychain dialog?)`);
     // The rule itself — that reporting state never touches the keychain — is enforced and proved
     // in scripts/check-keys.mjs against a safeStorage that counts every access. Here we can only
     // observe the symptom it prevents: on a build whose signature changed since a key was stored,

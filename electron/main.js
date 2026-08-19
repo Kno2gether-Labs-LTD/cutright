@@ -11,6 +11,7 @@ import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { makeKeyStore } from './keys.mjs';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
+import { spawn } from 'node:child_process';
 import { writeAgentFiles } from './brief.mjs';
 import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
 
@@ -711,18 +712,49 @@ function renderPreset(webContents, opts = {}) {
 }
 
 // ---------------------------------------------------------------- API keys
+// Every keychain call happens in a throwaway copy of this app, not here.
+//
+// safeStorage is synchronous and main-process-only, and on macOS it can simply not return: when
+// the app's code signature has changed since a key was stored (every rebuild of an app without a
+// Developer ID certificate) the system holds the call. Measured at 584 seconds, whole app frozen,
+// nothing in the log. There is no timeout to pass and no async variant to await — the only way to
+// bound it is to put it in a process we can kill.
+function keyOp(op, data = '', timeoutMs = 12_000) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [app.getAppPath()], {
+      env: { ...process.env, CUTRIGHT_KEY_OP: op, CUTRIGHT_KEY_DATA: data,
+             ELECTRON_RUN_AS_NODE: undefined },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    const done = (r) => { clearTimeout(timer); try { child.kill('SIGKILL'); } catch {} resolve(r); };
+    const timer = setTimeout(() => {
+      log('keychain', op, `gave up after ${timeoutMs}ms — the OS did not answer`);
+      done({ ok: false, error: 'the system keychain did not respond', timedOut: true });
+    }, timeoutMs);
+
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', (e) => done({ ok: false, error: e.message }));
+    child.on('close', () => {
+      const m = /CUTRIGHT_KEY_RESULT(\{.*\})/s.exec(out);
+      if (!m) return done({ ok: false, error: 'the keychain helper returned nothing' });
+      try { done(JSON.parse(m[1])); } catch (e) { done({ ok: false, error: e.message }); }
+    });
+  });
+}
+
 // Remote transcription needs a key. It is encrypted with the OS keychain (safeStorage) and only
 // ever leaves main to go to the provider — never to the renderer. The rules live in keys.mjs
 // so they can be tested without an app; the one that matters is that asking whether a key
 // exists must not decrypt it (see the note there).
-const keyStore = makeKeyStore({ safeStorage, getSettings: () => settings, save: () => saveSettings() });
+const keyStore = makeKeyStore({ runOp: keyOp, getSettings: () => settings, save: () => saveSettings() });
 const setApiKey = (provider, value) => keyStore.set(provider, value);
-const getApiKey = (provider) => keyStore.get(provider);
+const getApiKey = (provider) => keyStore.get(provider);       // async: it may unlock the keychain
 const hasApiKey = (provider) => keyStore.has(provider);
 const knownKeys = () => keyStore.known();
 
 // ---------------------------------------------------------------- transcription
-function transcribeMedia(webContents, opts = {}) {
+async function transcribeMedia(webContents, opts = {}) {
   if (!settings.work) return { error: 'no workspace open' };
   let project = {};
   try { project = JSON.parse(readFileSync(projectPath(), 'utf8')); } catch { /* a project is optional for transcribing */ }
@@ -739,6 +771,10 @@ function transcribeMedia(webContents, opts = {}) {
   child.stdout?.on('data', (d) => log('[stt]', d.toString().trim().slice(0, 300)));
 
   const engine = String(opts.engine || 'hyperframes');
+  // Unlocking a key can involve the OS keychain, so it is awaited here — at the point of use,
+  // with the job already announced to the UI — rather than while drawing anything.
+  const apiKey = engine === 'openai' ? await getApiKey('openai')
+               : engine === 'elevenlabs' ? await getApiKey('elevenlabs') : '';
   child.postMessage({ type: 'transcribe', job: {
     work: settings.work,
     media: opts.media || project?.meta?.graded || 'graded_master.mp4',
@@ -748,7 +784,7 @@ function transcribeMedia(webContents, opts = {}) {
     modelPath: opts.modelPath || '',
     rebuildCaptions: opts.rebuildCaptions !== false,
     wordsPerCue: Number(opts.wordsPerCue || 3),
-    apiKey: engine === 'openai' ? getApiKey('openai') : engine === 'elevenlabs' ? getApiKey('elevenlabs') : '',
+    apiKey,
   } });
   return { id };
 }
@@ -792,7 +828,10 @@ function analyzeCuts(opts = {}) {
 }
 
 // ---------------------------------------------------------------- audio generation
-function generateAudio({ kind, text, at }) {
+async function generateAudio({ kind, text, at }) {
+  // A key saved in the app was never reaching the generator, which only read the environment —
+  // so "saved" keys silently did nothing here. Unlock it at the point of use and pass it down.
+  const elevenlabs = await getApiKey('elevenlabs');
   return new Promise((res) => {
     if (!['sfx', 'voice', 'music'].includes(kind)) return res({ ok: false, error: 'bad kind' });
     const script = join(settings.engine, 'audio_agent.py');
@@ -801,7 +840,10 @@ function generateAudio({ kind, text, at }) {
     else if (kind === 'voice') args.push('--text', text, '--at', String(at));
     else args.push('--prompt', text, '--start', String(at), '--dur', '30');
     import('node:child_process').then(({ spawn }) => {
-      const py = spawn(settings.python, args, { cwd: settings.work, env: process.env });
+      const py = spawn(settings.python, args, {
+        cwd: settings.work,
+        env: { ...process.env, ...(elevenlabs ? { ELEVENLABS_API_KEY: elevenlabs } : {}) },
+      });
       let out = '';
       py.stdout.on('data', (d) => (out += d));
       py.stderr.on('data', (d) => (out += d));
@@ -1039,6 +1081,26 @@ function registerIpc() {
 process.on('uncaughtException', (e) => { try { log('UNCAUGHT', e?.stack || String(e)); } catch { console.error(e); } });
 process.on('unhandledRejection', (e) => { try { log('UNHANDLED-REJECTION', e?.stack || String(e)); } catch {} });
 
+// ---------------------------------------------------------------- keychain helper mode
+// Launched by keyOp() below: this same binary, started with one job, no window and no lock.
+// It exists so a keychain call that never returns can be killed. See keyOp().
+if (process.env.CUTRIGHT_KEY_OP) {
+  app.dock?.hide();
+  app.whenReady().then(() => {
+    const op = process.env.CUTRIGHT_KEY_OP;
+    const data = process.env.CUTRIGHT_KEY_DATA || '';
+    let out;
+    try {
+      if (op === 'available') out = { ok: true, value: safeStorage.isEncryptionAvailable() };
+      else if (op === 'encrypt') out = { ok: true, value: safeStorage.encryptString(data).toString('base64') };
+      else if (op === 'decrypt') out = { ok: true, value: safeStorage.decryptString(Buffer.from(data, 'base64')) };
+      else out = { ok: false, error: 'unknown key operation: ' + op };
+    } catch (e) { out = { ok: false, error: e?.message || String(e) }; }
+    process.stdout.write('CUTRIGHT_KEY_RESULT' + JSON.stringify(out));
+    app.exit(0);
+  });
+} else {
+
 // One instance per user-data directory. Two windows on the same project would fight over
 // project.json — each would save its own in-memory copy over the other's edits.
 if (!app.requestSingleInstanceLock()) {
@@ -1129,3 +1191,5 @@ function buildMenu() {
     ] },
   ]);
 }
+
+}   // end of normal (non-helper) startup
