@@ -306,6 +306,17 @@ def main():
                 pass                    # a cache that cannot be written is a slow render, not a broken one
 
     A,B=(a.range if a.range else [0.0,workDur]); span=B-A
+    # A range that lies past the end of the video used to "succeed": ffmpeg produced a file with
+    # an audio stream and no pictures, and nothing said so. Asking to preview seconds that do not
+    # exist is a mistake worth being told about, not one to answer with a silent audio file.
+    if a.range:
+        if A >= workDur - 0.01:
+            raise SystemExit(f"the range starts at {A:.2f}s but the video is only {workDur:.2f}s long")
+        if B > workDur:
+            B = workDur                     # a range that runs off the end is simply trimmed
+        A = max(0.0, A); span = B - A
+        if span <= 0.05:
+            raise SystemExit(f"the range {A:.2f}-{B:.2f}s is too short to render")
     # A and B stay on the ORIGINAL timeline for the whole render, because every element's times
     # are on that timeline and get mapped with `- A`. What changes is whether the video handed to
     # the next stage has already been trimmed to the range; that is this flag, and only it.
@@ -771,7 +782,31 @@ def main():
         run(["ffmpeg","-hide_banner","-y",*inputs,"-filter_complex",filt,"-map","0:v","-map","[aout]",
              "-c:v","copy","-c:a","aac","-b:a","192k","-movflags","+faststart",a.out],log=os.path.join(T,"audio_mix.log"))
     else:
-        shutil.move(cur,a.out)
+        # No music and no effects — but the project still asks for a loudness, and until now that
+        # was only honoured when something else happened to need the audio stage. The result was
+        # that a video WITH a music bed came out at the target and the same video WITHOUT one came
+        # out wherever the room happened to be: measured at -17.6 LUFS against a stated -14.
+        # Loudness is not a side effect of having music.
+        has_audio=False
+        try:
+            pr=subprocess.run(["ffprobe","-v","error","-select_streams","a","-show_entries",
+                               "stream=index","-of","csv=p=0",cur],capture_output=True,text=True,timeout=30)
+            has_audio=bool(pr.stdout.strip())
+        except Exception:
+            has_audio=False
+        if has_audio and lufs is not None:
+            pol=au.get("polish")
+            POLISH={"clean":"highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120",
+                    "warm":"highpass=f=70,equalizer=f=180:t=q:w=1:g=1.5,acompressor=threshold=-20dB:ratio=2.5",
+                    "podcast":"highpass=f=90,acompressor=threshold=-16dB:ratio=4:attack=5:release=150,alimiter=limit=0.95"}
+            chain=POLISH.get(str(pol).lower(),"") if pol else ""
+            pre=(chain+",") if chain else ""
+            run(["ffmpeg","-hide_banner","-y","-i",cur,
+                 "-af",f"{pre}loudnorm=I={lufs}:TP=-1.5:LRA=11",
+                 "-map","0:v?","-map","0:a","-c:v","copy","-c:a","aac","-b:a","192k",
+                 "-movflags","+faststart",a.out],log=os.path.join(T,"loudness.log"))
+        else:
+            shutil.move(cur,a.out)
 
     # ---------- 4. layers (optional): the same edit, taken apart ----------
     # A flat file is the deliverable; layers are how a person checks it, or finishes it in

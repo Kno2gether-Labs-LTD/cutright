@@ -81,5 +81,29 @@ const gapDucked = band('ducked.mp4', 7.0, 9.5), gapFlat = band('flat.mp4', 7.0, 
 if (gapDucked < gapFlat - 3)
   fail(`the bed never recovers in the gaps (${gapDucked.toFixed(1)} dB vs ${gapFlat.toFixed(1)} dB unducked)`);
 
+// ---- and the loudness target is honoured even with no music at all ----
+// It used to be reached only as a side effect of the audio stage running, which happened only
+// when there WAS a bed or an effect. So the same edit came out at the target with music and
+// wherever the room happened to be without it — measured at -17.6 LUFS against a stated -14 on
+// a real recording. Loudness is not a side effect of having music.
+const bare = JSON.parse(readFileSync(join(ws, 'ducked.json'), 'utf8'));
+bare.audio = { loudnessLUFS: -14, music: [], sfx: [] };
+writeFileSync(join(ws, 'bare.json'), JSON.stringify(bare));
+if (run('python3', [join(ROOT, 'engine/render_project.py'),
+    '--project', 'bare.json', '--out', 'bare.mp4']).status !== 0) fail('the no-music render failed');
+
+const lufs = (file) => {
+  const out = run('ffmpeg', ['-nostats', '-i', file, '-af', 'ebur128', '-f', 'null', '-']).stderr || '';
+  const m = /Integrated loudness:[\s\S]*?I:\s*(-?[\d.]+)\s*LUFS/.exec(out);
+  return m ? parseFloat(m[1]) : null;
+};
+const got = lufs(join(ws, 'bare.mp4'));
+if (got === null) fail('could not measure the loudness of the no-music render');
+if (Math.abs(got - -14) > 1.5)
+  fail(`a render with no music came out at ${got.toFixed(1)} LUFS against a stated -14 — `
+     + 'the loudness target is being ignored when there are no audio layers');
+console.log(`  no-music render    ${got.toFixed(1)} LUFS (target -14)`);
+
 rmSync(ws, { recursive: true, force: true });
-console.log('✓ audio: music steps back under the voice and comes up again in the gaps');
+console.log('✓ audio: music steps back under the voice, comes up in the gaps, and the loudness');
+console.log('  target is honoured with or without music');

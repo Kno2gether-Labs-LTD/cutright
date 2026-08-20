@@ -215,8 +215,15 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
     }
 
     if (want.includes('render')) {
-      const a = Number(process.env.CVE_SMOKE_A ?? 195);
-      const b = Number(process.env.CVE_SMOKE_B ?? 203);
+      // Clamp to the video actually open. The defaults were written for a long recording and
+      // asked for 195-203s of an eight-second fixture — which rendered "successfully" to a file
+      // with sound and no pictures, and told nobody.
+      const dur = await win.webContents.executeJavaScript(
+        `(window.__cve.project?.meta?.duration || 0)`).catch(() => 0);
+      let a = Number(process.env.CVE_SMOKE_A ?? 195);
+      let b = Number(process.env.CVE_SMOKE_B ?? 203);
+      if (dur && (a >= dur - 0.5)) { a = Math.max(0, dur * 0.25); b = Math.min(dur, a + Math.min(8, dur * 0.5)); }
+      logToApp(`[smoke] render range ${a.toFixed(2)}-${b.toFixed(2)} of ${dur}s`);
       const r = await win.webContents.executeJavaScript(`(async () => {
         const events = [];
         const off = window.editor.render.onEvent(e => events.push(e));
