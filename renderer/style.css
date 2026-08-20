@@ -158,7 +158,9 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 
 /* ---------------------------------------------------------------- timeline */
 .timeline-panel {
-  height: 336px; min-height: 132px; flex: none; display: flex; flex-direction: column;
+  /* Nine lanes now: picture, clips, overlays, captions, cuts, framing, zooms, audio, notes.
+     Taller by default so they fit on a normal window, and scrollable when they do not. */
+  height: 400px; min-height: 132px; flex: none; display: flex; flex-direction: column;
   background: var(--panel); border-top: 1px solid var(--line);
 }
 .tl-toolbar {
@@ -172,7 +174,10 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .toggle input { width: auto; }
 .kbd-hint { font-size: 10.5px; margin-left: 6px; }
 
-.tl-body { flex: 1; display: flex; min-height: 0; }
+/* The vertical scroller is the BODY, not the lane area — the track headers have to move with
+   their lanes, and they live in a separate column. Horizontal scrolling stays inside .tl-scroll
+   so the headers stay put when you scrub sideways. */
+.tl-body { flex: 1; display: flex; min-height: 0; overflow-y: auto; align-items: flex-start; }
 .tl-heads { width: var(--head-w); flex: none; border-right: 1px solid var(--line); background: var(--panel-2); }
 .thead {
   height: var(--row-h); display: flex; align-items: center; gap: 4px; padding: 0 8px;
@@ -187,7 +192,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .thead > span { font-size: 10.5px; letter-spacing: .3px; text-transform: uppercase; }
 
 .tl-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; }
-.tl-inner { position: relative; height: 100%; min-width: 100%; }
+.tl-inner { position: relative; min-height: 100%; min-width: 100%; }
 
 .ruler { height: 26px; position: relative; border-bottom: 1px solid var(--line-soft); }
 .ruler .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid #2c313b; padding-left: 5px;
@@ -320,7 +325,11 @@ button.accent:hover:not(:disabled) { background: oklch(33% 0.07 85); border-colo
   font-size: 12px; line-height: 1.6;
 }
 .ac-summary b { color: var(--lime); }
+/* The list has a max height and scrolls — but flex children SHRINK before a container overflows,
+   so with enough rows every one of them squashed to a bare border and the panel looked empty.
+   Rows keep their height; the list scrolls, which is what the max-height was for. */
 .ac-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+.ac-list > * { flex: none; }
 .ac-item {
   display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
   background: #14171d; border: 1px solid var(--line-soft); cursor: pointer;
@@ -656,3 +665,71 @@ select:focus { outline: none; border-color: #46506a; }
   box-shadow: inset 0 0 0 99px color-mix(in oklab, var(--accent) 14%, transparent);
 }
 .cap.multi { background: color-mix(in oklab, var(--accent) 55%, var(--panel-2)); }
+
+/* ------------------------------------------------------- the edit ledger */
+/* One row per change to the project. The author matters as much as the summary — "you" and
+   "agent" are the two things a person is scanning for — so it leads the row. */
+.hist-entry { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2);
+  overflow: hidden; flex: none; }
+.hist-entry + .hist-entry { margin-top: 6px; }
+.hist-entry.open { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
+.hist-head {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 11px; background: transparent; border: 0; text-align: left;
+}
+.hist-head:hover { background: color-mix(in oklab, var(--accent) 7%, transparent); }
+.hist-by {
+  font-size: 9.5px; letter-spacing: .4px; text-transform: uppercase; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px; flex: none;
+}
+.hist-by.you { color: var(--accent-ink); background: var(--accent); }
+.hist-by.agent { color: var(--bone); background: color-mix(in oklab, var(--accent2) 70%, transparent); }
+.hist-sum { font-size: 12px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-when { font-size: 10.5px; color: var(--dim); flex: none; }
+.hist-items { padding: 0 9px 6px; display: flex; flex-direction: column; gap: 4px; }
+.hist-items .ac-item { cursor: pointer; }
+.rsn.add { color: var(--good); }
+.rsn.remove { color: var(--danger); }
+.rsn.change { color: var(--accent); }
+
+/* ------------------------------------------------------- notes */
+/* A pin where you said something. Open notes are the brand amber because they are work
+   outstanding; a done one recedes. */
+.note-pin {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; font-size: 9px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); border: 1px solid transparent;
+}
+.note-pin.done { background: transparent; color: var(--dim); border-color: var(--line); }
+.note-pin.fromagent { background: var(--accent2); color: var(--bone); }
+.note-pin.selected { outline: 2px solid var(--bone); outline-offset: 1px; }
+.ac-item.spent .lbl { color: var(--dim); text-decoration: line-through; }
+#inspector textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+}
+#inspector textarea:focus { outline: none; border-color: var(--accent); }
+
+/* the second video track reads as picture, so it borrows the picture colour rather than a new one */
+.clip.vclip { background: color-mix(in oklab, var(--sky) 30%, var(--panel-2));
+  border-color: color-mix(in oklab, var(--sky) 45%, var(--line)); }
+
+/* ------------------------------------------------------- where to get material */
+/* The licence is the point of the row, so it sits next to the name rather than in the small
+   print: green means usable in paid work outright, amber means it depends on the item, red
+   means the site's own terms rule it out. */
+.src-row { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 10px 11px;
+  display: flex; flex-direction: column; gap: 5px; }
+.src-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.src-name { font-size: 12.5px; font-weight: 600; }
+.src-lic { font-size: 9.5px; letter-spacing: .3px; text-transform: uppercase; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.src-lic.good { color: var(--accent-ink); background: var(--good); }
+.src-lic.mixed { color: var(--accent-ink); background: var(--accent); }
+.src-lic.bad { color: var(--bone); background: var(--danger); }
+.src-lic.warn { color: color-mix(in oklab, var(--accent) 85%, var(--bone));
+  background: transparent; border: 1px solid color-mix(in oklab, var(--accent) 50%, var(--line)); }
+.src-plain { font-size: 11.5px; color: var(--text); line-height: 1.5; }
+.src-note { font-size: 11px; color: var(--dim); line-height: 1.5; }
+.src-watch { font-size: 11px; line-height: 1.5; color: color-mix(in oklab, var(--accent) 60%, var(--dim)); }

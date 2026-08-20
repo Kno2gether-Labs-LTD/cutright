@@ -76,6 +76,11 @@ def pick_encoder():
     raise SystemExit("no usable H.264 encoder in this ffmpeg (tried videotoolbox, libx264, libopenh264)")
 
 
+def even(v):
+    """Round to an even number: yuv420p cannot represent an odd width or height."""
+    n=int(round(float(v)));
+    return max(2,n-(n%2))
+
 def cut_cache_key(cuts,graded,camera,fps,dur,br):
     """Identity of a cut master: the cuts themselves plus the files they were made from."""
     import hashlib
@@ -511,6 +516,65 @@ def main():
              "-map","[v]","-map","0:a?",*HW,"-c:a","copy","-movflags","+faststart",framed],
             log=os.path.join(T,"frames.log"))
         src=framed; trimmed=trimmed or bool(a.range)
+
+    # ---------- 0d. CLIPS (a second video track: b-roll, a screen recording, a cutaway) ----------
+    # Until now a project held exactly ONE video, so a tutorial — talking head plus screen
+    # capture — could only be decorated, not edited. A clip is another piece of footage placed on
+    # the timeline: either filling the frame for its window, or sitting in a box over it.
+    #
+    # It composites on the PICTURE, before captions are burned in, so a caption sits on top of
+    # b-roll rather than under it. Same cut rule as scenes and overlays: a clip that straddles a
+    # cut is dropped rather than silently landing somewhere it was never meant to be.
+    clips=[]
+    for c in P.get("clips",[]):
+        if c.get("enabled") is False: continue
+        csrc=c.get("src") or ""
+        csrc=csrc if os.path.isabs(csrc) else os.path.join(W,csrc)
+        if not os.path.exists(csrc): continue
+        st=float(c.get("start",0)); cd=float(c.get("dur",0)) or 0.0
+        if cuts and (in_cut(st) or (cd and in_cut(st+cd))): continue
+        ns=remap(st)
+        if cd and ns+cd<=A: continue
+        if ns>=B: continue
+        clips.append({**c,"_src":csrc,"_ns":ns,"_dur":cd})
+
+    if clips:
+        args=["ffmpeg","-hide_banner","-y",*vin_for(src)]
+        for c in clips:
+            # -ss before -i seeks the SOURCE (which part of the clip to show); -itsoffset places
+            # that on the output timeline.
+            args+=["-itsoffset",str(round(c["_ns"]-A,3))]
+            if float(c.get("in",0)): args+=["-ss",str(float(c["in"]))]
+            args+=["-i",c["_src"]]
+
+        fc=[]; prev="[0:v]"
+        for i,c in enumerate(clips):
+            st=round(c["_ns"]-A,3); en=round(st+(c["_dur"] or (B-A)),3)
+            box=c.get("box") or {}
+            if str(c.get("fit","full"))=="box":
+                # Normalised, so the edit survives a change of resolution — same rule as zooms.
+                bw=even(VW*float(box.get("w",0.36))); bh=even(VH*float(box.get("h",0.36)))
+                bx=even(VW*float(box.get("x",0.6)));  by=even(VH*float(box.get("y",0.06)))
+            else:
+                bw,bh,bx,by=VW,VH,0,0
+            # "contain" letterboxes and never crops, which is what a screen recording needs —
+            # cropping a screen throws away the part someone is pointing at. "cover" fills.
+            if str(c.get("fill","contain"))=="cover":
+                fit=f"scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh}"
+            else:
+                fit=(f"scale={bw}:{bh}:force_original_aspect_ratio=decrease,"
+                     f"pad={bw}:{bh}:(ow-iw)/2:(oh-ih)/2:color=black")
+            out=f"[cl{i}]"
+            # setsar=1 for the reason learned the hard way: scale adjusts the sample aspect to
+            # preserve the display aspect, and an odd frame comes out of the far end of that.
+            fc.append(f"[{i+1}:v]{fit},setsar=1,fps={FPS}[c{i}]")
+            fc.append(f"{prev}[c{i}]overlay={bx}:{by}:eof_action=pass:enable='between(t,{st},{en})'{out}")
+            prev=out
+        clipped=os.path.join(T,"clips.mp4")
+        args+=["-filter_complex",";".join(fc),"-map",prev,"-map","0:a?",*HW,
+               "-movflags","+faststart","-c:a","copy",clipped]
+        run(args,log=os.path.join(T,"clips.log"))
+        src=clipped; trimmed=trimmed or bool(a.range)
 
     # ---------- 1. captions (resolve overrides, drop inside-cut, remap) ----------
     cues=[]

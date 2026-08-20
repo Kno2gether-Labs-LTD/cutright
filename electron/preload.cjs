@@ -12,6 +12,9 @@ const str = (v) => (typeof v === 'string' ? v : '');
 // the isolated world; the page only ever sees plain, structured-cloned events.
 const renderListeners = new Set();
 const ports = new Map();
+const historyListeners = new Set();
+ipcRenderer.on('history:changed', () => historyListeners.forEach((fn) => { try { fn(); } catch {} }));
+
 ipcRenderer.on('render:port', (e, { id }) => {
   const port = e.ports[0];
   ports.set(id, port);
@@ -129,6 +132,7 @@ contextBridge.exposeInMainWorld('editor', {
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),
   pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
+  pickClip: () => ipcRenderer.invoke('clip:pick'),
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
     apply: (id) => ipcRenderer.invoke('templates:apply', str(id)),
@@ -169,6 +173,27 @@ contextBridge.exposeInMainWorld('editor', {
     minCut: num(o.minCut, 0.35), fillers: o.fillers !== false, stutters: o.stutters !== false,
     softFillers: !!o.softFillers, ai: !!o.ai,
   }),
+
+  // --- the edit ledger ---
+  history: {
+    list: () => ipcRenderer.invoke('history:list'),
+    revert: (o = {}) => ipcRenderer.invoke('history:revert', {
+      id: str(o.id),
+      changes: Array.isArray(o.changes) ? o.changes.map(str) : [],
+      force: !!o.force,
+    }),
+    onChanged: on(historyListeners),
+  },
+
+  // --- where to get material you are allowed to use ---
+  media: {
+    sources: (o = {}) => ipcRenderer.invoke('media:sources', {
+      kind: str(o.kind), commercialOnly: !!o.commercialOnly,
+    }),
+    credit: (o = {}) => ipcRenderer.invoke('media:credit', {
+      source: str(o.source), title: str(o.title), author: str(o.author), url: str(o.url),
+    }),
+  },
 
   // --- protecting hand edits from the agent's rewrite ---
   guard: {

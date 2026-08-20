@@ -136,6 +136,47 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       // Generation is listed, never performed, here. Anything added later — an MCP server,
       // an image or video generation API — appends an entry in this shape: what it makes,
       // whether it is configured, and the exact way to call it.
+      // Notes are the closest thing the app has to a conversation. Everything else records what
+      // the user WANTS; a note records what they think is WRONG, at the moment they thought it.
+      notes: {
+        where: 'project.json → notes[] — { id, at, text, by, done, reply }',
+        meaning: 'each one is a job at a moment in the video, written while watching it',
+        howToWork: 'read them in time order, do the work, write what you did into `reply`, and '
+                 + 'set done:true. Do not edit the user\'s `text` — those are their words.',
+        ifYouDisagree: 'say so in `reply` and leave done:false. A note you cannot honour is a '
+                     + 'conversation, not a failure — never silently drop one.',
+        yourOwn: 'you may add a note with by:"agent" to raise something the user should look at.',
+      },
+
+      // The second video track. A project used to hold exactly one video, so a tutorial —
+      // talking head plus screen capture — could only be decorated, not edited.
+      clips: {
+        where: 'project.json → clips[]',
+        shape: '{ id, src, start, dur, in, fit:"full"|"box", box:{x,y,w,h}, fill:"contain"|"cover", mute }',
+        times: 'start and dur are on the ORIGINAL timeline like everything else; `in` is where to '
+             + 'begin inside the CLIP\'s own clock',
+        geometry: 'box values are fractions of the frame, 0..1 — never pixels, so the edit '
+                + 'survives a change of resolution. Same rule as zoom centres.',
+        fill: '"contain" letterboxes and never crops — the right choice for a screen recording, '
+            + 'because cropping throws away the part the user is pointing at. "cover" fills.',
+        careful: 'a clip that straddles a cut is DROPPED at render, exactly like a scene or an '
+               + 'overlay. Place it clear of cuts and run the verifier.',
+      },
+
+      // Where to get material the user is ALLOWED to use. Cutright hosts nothing and downloads
+      // nothing; this tells the agent the directory exists and, more importantly, that "free" is
+      // not one thing. The rule below is the whole reason it is in the brief.
+      mediaSources: {
+        catalogue: 'data/media-sources.json (in the app), or ask the user to open Find media',
+        rule: 'NEVER tell the user something is free to use. Name the licence. If it requires '
+            + 'attribution, say so and record it in project.credits[]. If the licence varies per '
+            + 'item, say that the item itself must be checked — the site does not decide it.',
+        neverDo: 'download material on the user\'s behalf, or add a clip to the project that the '
+               + 'user has not obtained and cleared themselves',
+        credits: 'project.credits[] — each { source, title, author, url, licence, required }. '
+               + 'Anything with required:true has to appear in the video description.',
+      },
+
       mediaGeneration: {
         audio: {
           provider: 'elevenlabs',

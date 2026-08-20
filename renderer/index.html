@@ -63,6 +63,8 @@
         <button id="btnLook" class="icon wide" title="Film look, grain, vignette and audio polish (L)">Look</button>
         <button id="btnPrepare" class="icon wide accent" title="Do the structural pass: transcribe, cut, decide who has the frame, apply the pack">Prepare</button>
         <button id="btnVerify" class="icon wide" title="Check the edit for things a render would silently drop">Check</button>
+        <button id="btnHistory" class="icon wide" title="Everything that has changed, and how to take any of it back">History</button>
+        <button id="btnMedia" class="icon wide" title="Where to get footage, stills and sound you are allowed to use">Find media</button>
         <button id="btnTranscriptEdit" class="icon wide accent" title="Edit by transcript — delete words to cut the video (D)">Transcript</button>
         <label class="toggle" title="Snap to clip edges and the playhead">
           <input type="checkbox" id="chkSnap" checked><span>Snap</span></label>
@@ -73,6 +75,8 @@
         <div class="tl-heads" id="tlHeads">
           <div class="thead ruler-head"></div>
           <div class="thead" data-track="scenes"><span>Scenes</span></div>
+          <div class="thead" data-track="clips"><span>Clips</span>
+            <button class="mini" data-add="clip" title="Place another video on the timeline — b-roll, a screen recording, a cutaway">+</button></div>
           <div class="thead" data-track="overlays"><span>Overlays</span>
             <button class="mini" data-add="overlay" title="Add an overlay clip (HyperFrames / alpha video)">+</button></div>
           <div class="thead" data-track="captions"><span>Captions</span>
@@ -88,18 +92,22 @@
             <button class="mini" data-add="music" title="Add a music layer">♪</button>
             <button class="mini" data-add="sfx" title="Add an SFX layer">✳</button>
             <button class="mini" data-gen="1" title="Generate audio with ElevenLabs">✨</button></div>
+          <div class="thead" data-track="notes"><span>Notes</span>
+            <button class="mini" data-add="note" title="Leave a note at the playhead for the agent (N)">+</button></div>
         </div>
 
         <div class="tl-scroll" id="tlScroll">
           <div class="tl-inner" id="tlInner">
             <div class="ruler" id="ruler"></div>
             <div class="lane" id="laneScenes" data-lane="scenes"></div>
+            <div class="lane" id="laneClips" data-lane="clips"></div>
             <div class="lane" id="laneOverlays" data-lane="overlays"></div>
             <div class="lane" id="laneCaps" data-lane="captions"></div>
             <div class="lane" id="laneCuts" data-lane="cuts"></div>
             <div class="lane" id="laneFrames" data-lane="frames"></div>
             <div class="lane" id="laneZooms" data-lane="zooms"></div>
             <div class="lane" id="laneAudio" data-lane="audio"></div>
+            <div class="lane" id="laneNotes" data-lane="notes"></div>
             <div class="playhead" id="playhead"></div>
           </div>
         </div>

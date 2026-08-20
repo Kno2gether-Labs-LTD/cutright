@@ -1107,17 +1107,22 @@ export async function runEditTests({ win, settings, app }) {
   await test('zooms: the track shows six lanes, aligned and none clipped', async () => {
     const r = await js(`(() => {
       const panel = document.querySelector('.timeline-panel').getBoundingClientRect();
+      const body = document.querySelector('.tl-body');
+      const scrolls = body.scrollHeight > body.clientHeight + 1;
       const lanes = [...document.querySelectorAll('.lane')].map((l) => {
         const b = l.getBoundingClientRect();
-        return { id: l.id, top: Math.round(b.top), clipped: b.bottom > panel.bottom + 0.5 };
+        // Below the fold is fine when the area scrolls; unreachable is not.
+        return { id: l.id, top: Math.round(b.top), clipped: !scrolls && b.bottom > panel.bottom + 0.5 };
       });
       const heads = [...document.querySelectorAll('.thead:not(.ruler-head)')]
         .map((h) => Math.round(h.getBoundingClientRect().top));
-      return { ids: lanes.map((l) => l.id), clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
+      return { ids: lanes.map((l) => l.id), scrolls,
+               clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
                misaligned: lanes.filter((l, i) => Math.abs(l.top - heads[i]) > 2).map((l) => l.id) };
     })()`);
     expect(r.ids.includes('laneZooms'), 'there is no Zooms lane');
-    expect(!r.clipped.length, 'lanes fall outside the timeline panel: ' + r.clipped.join(', '));
+    expect(!r.clipped.length,
+      'lanes fall outside the timeline panel and it does not scroll: ' + r.clipped.join(', '));
     expect(!r.misaligned.length, 'lanes do not line up with their headers: ' + r.misaligned.join(', '));
     return r;
   });
@@ -1152,6 +1157,58 @@ export async function runEditTests({ win, settings, app }) {
     await settle();
     expect((disk().zooms || []).length === before, 'deleting the zoom did not remove it from the project');
     return { added: added.length, x: z.x, y: z.y, start: z.start };
+  });
+
+  await test('history: an agent pass is recorded, and one part of it can be taken back', async () => {
+    // The promise: the agent rewrites forty things and you can take back the one you disagree
+    // with, keeping the other thirty-nine. Do exactly that.
+    const before = disk();
+    const keptCuts = before.cuts || [];
+
+    // Be the agent: write project.json from outside, changing two unrelated things.
+    const pass = JSON.parse(JSON.stringify(before));
+    pass.cuts = [...keptCuts, { id: 'hist-cut', start: at(0.30), end: at(0.36) }];
+    pass.zooms = [...(pass.zooms || []), { id: 'hist-zoom', start: at(0.6), dur: 1, scale: 1.5, x: 0.5, y: 0.5 }];
+    await writeProject(pass);
+    await settle();
+    await wait(500);                       // the watcher debounces before it records
+
+    let list = await js(`(async () => await window.editor.history.list())()`, true);
+    expect(list.entries.length >= 1, 'nothing was recorded when the project changed underneath');
+    const entry = list.entries[0];
+    expect(entry.by === 'agent', `the change was attributed to "${entry.by}", expected the agent`);
+    expect(entry.changes.length === 2, `recorded ${entry.changes.length} changes, expected 2`);
+    expect(/added/.test(entry.summary), 'the summary does not say what happened: ' + entry.summary);
+
+    // Take back ONLY the cut. The zoom must survive.
+    const cutChange = entry.changes.find((c) => c.kind === 'cuts');
+    expect(cutChange, 'the added cut was not in the entry');
+    const res = await js(`(async () => await window.editor.history.revert(
+      { id: '${entry.id}', changes: ['${cutChange.kind}:${cutChange.id}'] }))()`, true);
+    expect(res.applied === 1, `took back ${res.applied} changes, expected 1 (${JSON.stringify(res.conflicts)})`);
+
+    await settle();
+    const now = disk();
+    expect(!(now.cuts || []).some((c) => c.id === 'hist-cut'), 'the cut was not taken back');
+    expect((now.zooms || []).some((z) => z.id === 'hist-zoom'),
+      'taking back the cut also threw away the zoom the agent added');
+
+    // Taking it back is itself an edit, and is recorded as one — attributed to the person.
+    list = await js(`(async () => await window.editor.history.list())()`, true);
+    expect(list.entries[0].by === 'you', 'the revert was not recorded as the user’s own edit');
+
+    // And it refuses to undo the same thing twice rather than duplicating anything.
+    const again = await js(`(async () => await window.editor.history.revert(
+      { id: '${entry.id}', changes: ['${cutChange.kind}:${cutChange.id}'] }))()`, true);
+    expect(again.applied === 0 && (again.conflicts || []).length === 1,
+      'undoing the same change twice was not refused: ' + JSON.stringify(again));
+
+    const restore = disk();
+    restore.cuts = keptCuts;
+    restore.zooms = (restore.zooms || []).filter((z) => z.id !== 'hist-zoom');
+    await writeProject(restore);
+    await settle();
+    return { recorded: entry.changes.length, by: entry.by, tookBack: res.applied };
   });
 
   await test('layout: panels resize, stay within reach, remember, and reset', async () => {
@@ -1218,6 +1275,108 @@ export async function runEditTests({ win, settings, app }) {
     await js(`(() => { window.Panels.resetAll(); })()`);
     await wait(100);
     return { start: Math.round(start), wider: Math.round(wider), capped: Math.round(capped.rail) };
+  });
+
+  await test('notes: a note pins a job to a moment, and survives to disk', async () => {
+    // Directing an editor is mostly saying "this bit drags" at a particular moment. The note has
+    // to land at the moment you said it, keep your words, and be visible on the track.
+    const before = (disk().notes || []).length;
+    // Pause first: a note lands wherever the playhead IS, which is correct behaviour but makes
+    // the assertion meaningless if the video is still running under it.
+    await js(`document.querySelector('#video').pause()`);
+    await js(`window.__cve.seek(${at(0.42)})`);
+    await wait(150);
+    // Where the playhead ACTUALLY is, which is not always where you asked: land inside a cut and
+    // the player skips past it. The note belongs at the playhead, so that is what to compare to.
+    const playhead = await js(`window.__cve.now()`);
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))`);
+    await settle();
+
+    let d = disk();
+    expect((d.notes || []).length === before + 1, `a note was not added (${(d.notes || []).length})`);
+    const n = d.notes[d.notes.length - 1];
+    expect(Math.abs(n.at - playhead) < 0.1, `the note landed at ${n.at}, playhead was ${playhead.toFixed(2)}`);
+    expect(n.done === false && n.by === 'you', 'a new note should be open and attributed to the user');
+
+    // Typing into it saves without a button.
+    await js(`(() => { const t = document.querySelector('#noteText');
+      t.value = 'this drags — tighten it'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await settle();
+    d = disk();
+    expect(d.notes[d.notes.length - 1].text === 'this drags — tighten it',
+      'the note text did not reach disk: ' + JSON.stringify(d.notes[d.notes.length - 1].text));
+
+    const pins = await js(`document.querySelectorAll('#laneNotes .note-pin').length`);
+    expect(pins === (d.notes || []).length, `${pins} pins on the track for ${d.notes.length} notes`);
+
+    // The verifier should mention it rather than let an export be a surprise.
+    const v = await js(`(async () => await window.editor.verify())()`, true);
+    expect((v.issues || []).some((i) => /note/i.test(i.what)),
+      'the check does not mention an open note: ' + JSON.stringify((v.issues || []).map((i) => i.what)));
+
+    // Marking it done takes it out of the way.
+    await js(`(() => { const b = [...document.querySelectorAll('#inspector button')]
+      .find(x => /Mark done/.test(x.textContent)); b.click(); })()`);
+    await settle();
+    expect(disk().notes[disk().notes.length - 1].done === true, 'marking done did not stick');
+
+    const restore = disk();
+    restore.notes = (restore.notes || []).slice(0, before);
+    await writeProject(restore);
+    await settle();
+    return { at: n.at, pins };
+  });
+
+  await test('clips: a second video track round-trips and the check guards it', async () => {
+    // The structural gap this closes: a project used to hold exactly one video, so a tutorial —
+    // talking head plus screen capture — could only be decorated, not edited.
+    const before = disk();
+    const p = JSON.parse(JSON.stringify(before));
+    p.clips = [{ id: 'sel-clip', src: 'graded_master.mp4', start: at(0.2), dur: 2,
+                 in: 0.5, fit: 'box', box: { x: 0.6, y: 0.08, w: 0.3, h: 0.3 }, mute: true }];
+    await writeProject(p);
+    await settle();
+
+    const lane = await js(`document.querySelectorAll('#laneClips .clip').length`);
+    expect(lane === 1, `the clips lane shows ${lane} clips, expected 1`);
+
+    await js(`(() => document.querySelector('#laneClips .clip').click())()`);
+    await wait(250);
+    const badge = await js(`document.querySelector('#selBadge').textContent`);
+    expect(/clip/.test(badge), `selecting a clip showed "${badge}"`);
+
+    // The box is fractions of the frame, not pixels — the thing that lets the edit survive a
+    // change of resolution.
+    // Match on the word alone: the label carries an en-dash, and putting that inside an injected
+    // regex is a good way to spend ten minutes on the wrong bug.
+    const typed = await js(`(() => {
+      const f = [...document.querySelectorAll('#inspector .field')]
+        .find(x => (x.textContent || '').indexOf('Width') === 0);
+      if (!f) return 'no width field';
+      const i = f.querySelector('input');
+      i.value = '0.5';
+      // field() wires oninput, not onchange.
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'ok';
+    })()`);
+    expect(typed === 'ok', 'could not find the box width field: ' + typed);
+    await settle();
+    expect(Math.abs((disk().clips[0].box.w) - 0.5) < 0.001,
+      'editing the box width did not reach disk: ' + JSON.stringify(disk().clips[0].box));
+
+    // A clip that straddles a cut is dropped at render, so the check has to say so first.
+    const withCut = disk();
+    withCut.cuts = [...(withCut.cuts || []), { start: at(0.24), end: at(0.28) }];
+    await writeProject(withCut);
+    await settle();
+    const v = await js(`(async () => await window.editor.verify())()`, true);
+    expect((v.issues || []).some((i) => /clip straddles a cut/.test(i.what)),
+      'the check said nothing about a clip straddling a cut: '
+      + JSON.stringify((v.issues || []).map((i) => i.what)));
+
+    await writeProject(before);
+    await settle();
+    return { lane, badge };
   });
 
   await test('captions: several can be selected together and moved with the keyboard', async () => {
@@ -1607,17 +1766,22 @@ export async function runEditTests({ win, settings, app }) {
   await test('framing: seven lanes, still aligned and nothing clipped', async () => {
     const r = await js(`(() => {
       const panel = document.querySelector('.timeline-panel').getBoundingClientRect();
+      const body = document.querySelector('.tl-body');
+      const scrolls = body.scrollHeight > body.clientHeight + 1;
       const lanes = [...document.querySelectorAll('.lane')].map((l) => {
         const b = l.getBoundingClientRect();
-        return { id: l.id, top: Math.round(b.top), clipped: b.bottom > panel.bottom + 0.5 };
+        // Below the fold is fine when the area scrolls; unreachable is not.
+        return { id: l.id, top: Math.round(b.top), clipped: !scrolls && b.bottom > panel.bottom + 0.5 };
       });
       const heads = [...document.querySelectorAll('.thead:not(.ruler-head)')]
         .map((h) => Math.round(h.getBoundingClientRect().top));
-      return { ids: lanes.map((l) => l.id), clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
+      return { ids: lanes.map((l) => l.id), scrolls,
+               clipped: lanes.filter((l) => l.clipped).map((l) => l.id),
                misaligned: lanes.filter((l, i) => Math.abs(l.top - heads[i]) > 2).map((l) => l.id) };
     })()`);
     expect(r.ids.includes('laneFrames'), 'there is no Framing lane');
-    expect(!r.clipped.length, 'lanes fall outside the timeline panel: ' + r.clipped.join(', '));
+    expect(!r.clipped.length,
+      'lanes fall outside the timeline panel and it does not scroll: ' + r.clipped.join(', '));
     expect(!r.misaligned.length, 'lanes do not line up with their headers: ' + r.misaligned.join(', '));
     return r;
   });

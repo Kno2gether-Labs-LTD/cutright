@@ -270,6 +270,14 @@ function renderTimeline() {
          + (f.to === 'full' ? '' : ` · ${Math.round((f.size || 0.26) * 100)}% of the width`),
   })), 'frame');
 
+  // clips — the second video track: b-roll, a screen recording, a cutaway
+  fillLane('#laneClips', (project.clips || []).map((c, i) => ({
+    i, start: c.start, dur: Math.max(0.2, c.dur || 2), cls: 'clip vclip', minW: 60,
+    label: (c.src || '').split('/').pop() || 'no file',
+    title: `${c.src || 'no file'} · ${c.fit === 'box' ? 'in a box' : 'full frame'}`
+         + ` · ${fmt(c.start)} → ${fmt((c.start || 0) + (c.dur || 0))}`,
+  })), 'clip');
+
   // zooms — a push-in is a scale plus a centre, so show both at a glance
   fillLane('#laneZooms', (project.zooms || []).map((z, i) => ({
     i, start: z.start, dur: Math.max(0.2, z.dur || 1), cls: 'clip zoom', minW: 44,
@@ -293,6 +301,19 @@ function renderTimeline() {
     el.onclick = (ev) => { ev.stopPropagation(); pick(kind, i, ev); };
     la.appendChild(el);
   }));
+
+  // notes — a marker where you said something, and whether it has been dealt with
+  const ln = $('#laneNotes'); ln.innerHTML = '';
+  (project.notes || []).forEach((n, i) => {
+    const el = document.createElement('div');
+    el.className = 'note-pin' + (n.done ? ' done' : '') + (n.by === 'agent' ? ' fromagent' : '');
+    el.style.left = t2x(n.at || 0) + 'px';
+    el.textContent = n.done ? '✓' : '●';
+    el.title = `${n.text || '(empty note)'}${n.reply ? '\n↳ ' + n.reply : ''}\n${fmt(n.at || 0)}`;
+    if (sel?.kind === 'note' && sel.index === i) el.classList.add('selected');
+    el.onclick = (ev) => { ev.stopPropagation(); select('note', i); };
+    ln.appendChild(el);
+  });
 
   positionPlayhead();
 }
@@ -375,6 +396,10 @@ function initTimelineInteraction() {
   $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
   $('#btnStartAgent').onclick = () => startAgentEdit();
   $('#btnAgentBrief').onclick = () => showAgentBrief();
+  $('#btnHistory').onclick = () => showHistory();
+  // The list is live: when the agent writes, the history grows underneath you.
+  E.history.onChanged(() => { if ($('#selBadge').textContent === 'history') showHistory(); });
+  $('#btnMedia').onclick = () => showMediaPanel();
   $('#btnAgentPick').onclick = () => showAgentPicker();
   refreshAgents();
 
@@ -520,7 +545,9 @@ function nudgeCaptions({ dy = 0, dsize = 0 }) {
 function elemOf(s) {
   if (!s || !project) return null;
   if (s.kind === 'scene') return project.scenes?.[s.index];
+  if (s.kind === 'clip') return project.clips?.[s.index];
   if (s.kind === 'caption') return project.captions?.cues?.[s.index];
+  if (s.kind === 'note') return project.notes?.[s.index];
   if (s.kind === 'music') return project.audio?.music?.[s.index];
   if (s.kind === 'sfx') return project.audio?.sfx?.[s.index];
   if (s.kind === 'cut') return project.cuts?.[s.index];
@@ -597,6 +624,8 @@ function renderInspector() {
   h.append(title, btn('Delete', remove, 'danger'));
   box.appendChild(h);
 
+  if (sel.kind === 'note') return renderNoteInspector(box, e);
+  if (sel.kind === 'clip') return renderClipInspector(box, e);
   if (sel.kind === 'caption') renderCaptionInspector(box, e);
   else if (sel.kind === 'scene') renderSceneInspector(box, e);
   else if (sel.kind === 'cut') renderCutInspector(box, e);
@@ -1080,7 +1109,9 @@ function applyZoomSuggestions() {
 function remove() {
   if (!sel) return;
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
+  else if (sel.kind === 'clip') project.clips.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
+  else if (sel.kind === 'note') project.notes.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
   else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
   else if (sel.kind === 'zoom') project.zooms.splice(sel.index, 1);
@@ -1119,6 +1150,8 @@ document.addEventListener('click', (ev) => {
     if (k === 'cut') return addCut();
     if (k === 'zoom') return addZoom();
     if (k === 'frame') return addFrame();
+    if (k === 'note') return addNote();
+    if (k === 'clip') return addClip();
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({
@@ -2654,6 +2687,7 @@ function initKeys() {
       case 'Home': seekTimeline(0); break;
       case 'End': seekTimeline(dur - 0.1); break;
       case 's': case 'S': if (project) addCut(); break;
+      case 'n': case 'N': if (project) addNote(); break;
       case 'Backspace': case 'Delete':
         if (tx.open && tx.sel) { ev.preventDefault(); cutSelection(); }
         else if (sel) { ev.preventDefault(); remove(); }
@@ -2938,3 +2972,369 @@ function skipPastCuts(t) {
 }
 video.addEventListener('timeupdate', () => skipPastCuts());
 video.addEventListener('seeked', () => skipPastCuts());
+
+// ---------------------------------------------------------------- the edit ledger
+// The agent rewrites forty things in one pass. "Undo" as a single step would throw all forty
+// away or none of them, so this shows the pass as a list of ELEMENTS — this cut, that caption —
+// and any of them can be taken back on its own. Reverting applies the inverse to the project as
+// it is NOW, so work done afterwards survives.
+let history = { entries: [], open: null, picked: new Set() };
+
+async function showHistory() {
+  const r = await E.history.list();
+  history.entries = r?.entries || [];
+  renderHistoryPanel();
+}
+
+function renderHistoryPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'history';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'history';
+  const when = document.createElement('span');
+  when.textContent = history.entries.length ? `${history.entries.length} changes` : 'nothing yet';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  if (!history.entries.length) {
+    box.appendChild(hint('Every change to this project is recorded here — yours and the agent’s — '
+      + 'with a way to take any of it back. Nothing has changed since you opened it.'));
+    return;
+  }
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const list = document.createElement('div'); list.className = 'ac-list';
+
+  history.entries.forEach((e) => {
+    const open = history.open === e.id;
+    const row = document.createElement('div');
+    row.className = 'hist-entry' + (open ? ' open' : '');
+
+    const head = document.createElement('button'); head.className = 'hist-head';
+    const who = document.createElement('span');
+    who.className = 'hist-by ' + (e.by === 'agent' ? 'agent' : 'you');
+    who.textContent = e.by === 'agent' ? 'agent' : 'you';
+    const sum = document.createElement('span'); sum.className = 'hist-sum'; sum.textContent = e.summary;
+    const ago = document.createElement('span'); ago.className = 'hist-when'; ago.textContent = shortWhen(e.at);
+    head.append(who, sum, ago);
+    head.onclick = () => { history.open = open ? null : e.id; history.picked = new Set(); renderHistoryPanel(); };
+    row.appendChild(head);
+
+    if (open) {
+      const items = document.createElement('div'); items.className = 'hist-items';
+      e.changes.forEach((c) => {
+        const key = `${c.kind}:${c.id}`;
+        const it = document.createElement('div'); it.className = 'ac-item';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = history.picked.has(key);
+        cb.onclick = (ev) => { ev.stopPropagation();
+          if (cb.checked) history.picked.add(key); else history.picked.delete(key);
+          const b = $('#histRevert');
+          if (b) b.textContent = history.picked.size ? `Take back ${history.picked.size}` : 'Take back all of it';
+        };
+        const op = document.createElement('span'); op.className = 'rsn ' + c.op; op.textContent = c.op;
+        const lbl = document.createElement('span'); lbl.className = 'lbl';
+        lbl.textContent = `${c.what}${c.fields?.length ? ' — ' + c.fields.join(', ') : ''}`;
+        it.append(cb, op, lbl);
+        // Clicking the row takes you to the moment it happened at, so "what is this?" is one click.
+        it.onclick = () => seekTimeline(c.at || 0);
+        it.title = `${c.op} ${c.kind.replace(/s$/, '')} · click to jump there`;
+        items.appendChild(it);
+      });
+      row.appendChild(items);
+
+      const actions = document.createElement('div'); actions.className = 'btnrow';
+      const revert = btn('Take back all of it', async () => {
+        const picks = [...history.picked];
+        const res = await E.history.revert({ id: e.id, changes: picks });
+        if (res?.error) return setStatus('Could not take that back: ' + res.error, 'error');
+        if (!res.applied) {
+          setStatus(res.conflicts?.[0]?.why ? `Nothing taken back — ${res.conflicts[0].why}` : 'Nothing to take back', 'error');
+        } else {
+          const extra = res.conflicts?.length ? `, ${res.conflicts.length} could not be` : '';
+          setStatus(`Took back ${res.applied} change${res.applied === 1 ? '' : 's'}${extra}`, 'ok');
+        }
+        await reloadIfChanged(true);
+        renderTimeline();
+        showHistory();
+      }, 'primary');
+      revert.id = 'histRevert';
+      actions.append(revert, btn('Select none', () => { history.picked = new Set(); renderHistoryPanel(); }));
+      row.appendChild(actions);
+      if (e.by === 'agent') {
+        row.appendChild(hint('Tick individual changes to keep the rest of the agent’s pass. '
+          + 'Anything somebody has edited since is left alone and reported rather than overwritten.'));
+      }
+    }
+    list.appendChild(row);
+  });
+
+  wrap.appendChild(list);
+  box.appendChild(wrap);
+}
+
+function shortWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// ---------------------------------------------------------------- notes
+// Directing an editor is mostly saying "this bit drags" at a particular moment. A note is that
+// sentence, pinned to a time, and the agent treats it as work to do rather than commentary — it
+// answers, and marks it done. Nothing else in the app is a conversation; this is.
+function addNote() {
+  if (!project) return;
+  project.notes = project.notes || [];
+  const at = +(timelineNow() || 0).toFixed(2);
+  project.notes.push({ id: 'n' + Date.now().toString(36), at, text: '', by: 'you',
+                       done: false, reply: null, createdAt: new Date().toISOString() });
+  project.notes.sort((a, b) => (a.at || 0) - (b.at || 0));
+  save(); renderTimeline();
+  const i = project.notes.findIndex((n) => Math.abs(n.at - at) < 0.005 && !n.text);
+  select('note', i < 0 ? project.notes.length - 1 : i);
+  // Straight into typing: a note you have to click twice to write is a note nobody writes.
+  setTimeout(() => { const f = $('#noteText'); if (f) { f.focus(); } }, 60);
+}
+
+function renderNoteInspector(box, e) {
+  box.appendChild(sechead(`Note at ${fmt(e.at || 0)}`));
+
+  const wrap = document.createElement('div'); wrap.className = 'field';
+  const l = document.createElement('label');
+  l.textContent = 'What should change here';
+  const ta = document.createElement('textarea');
+  ta.id = 'noteText'; ta.rows = 3; ta.value = e.text || '';
+  ta.placeholder = 'this drags — tighten it';
+  ta.oninput = () => { e.text = ta.value; save(); };
+  ta.onblur = () => renderTimeline();
+  wrap.append(l, ta); box.appendChild(wrap);
+
+  if (e.reply) {
+    box.appendChild(sechead('The agent answered'));
+    box.appendChild(hint(e.reply));
+  }
+
+  box.appendChild(btnRow(
+    btn(e.done ? '✓ Done — reopen' : 'Mark done', () => {
+      e.done = !e.done; save(); renderTimeline(); renderInspector();
+    }, e.done ? '' : 'primary'),
+    btn('Play from here', () => { seekTimeline(Math.max(0, (e.at || 0) - 1)); video.play().catch(() => {}); }),
+    btn('Delete', () => { remove(); }),
+  ));
+  box.appendChild(hint('The agent reads notes[] and treats each one as a job: it does the work, '
+    + 'writes what it did, and marks the note done. Yours stay yours — it never edits your words.'));
+  box.appendChild(btnRow(btn('All notes', () => showNotesPanel())));
+}
+
+function showNotesPanel() {
+  const notes = project?.notes || [];
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'notes';
+  const open = notes.filter((n) => !n.done).length;
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'notes';
+  const when = document.createElement('span');
+  when.textContent = notes.length ? `${open} open of ${notes.length}` : 'none yet';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  if (!notes.length) {
+    box.appendChild(hint('Press N while watching to leave a note at that moment — "this drags", '
+      + '"wrong word", "cut to the screen here". The agent picks them up as a list of jobs.'));
+    box.appendChild(btnRow(btn('Leave one now', () => addNote(), 'primary')));
+    return;
+  }
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const list = document.createElement('div'); list.className = 'ac-list';
+  notes.forEach((n, i) => {
+    const row = document.createElement('div'); row.className = 'ac-item' + (n.done ? ' spent' : '');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!n.done;
+    cb.onclick = (ev) => { ev.stopPropagation(); n.done = cb.checked; save(); renderTimeline(); showNotesPanel(); };
+    const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(n.at || 0);
+    const lbl = document.createElement('span'); lbl.className = 'lbl';
+    lbl.textContent = n.text || '(empty)';
+    row.append(cb, t, lbl);
+    if (n.reply) { const r = document.createElement('span'); r.className = 'rsn change'; r.textContent = 'answered'; row.appendChild(r); }
+    row.onclick = () => select('note', i);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  wrap.appendChild(btnRow(
+    btn('Leave another', () => addNote(), 'primary'),
+    btn('Clear the done ones', () => {
+      project.notes = (project.notes || []).filter((n) => !n.done);
+      save(); renderTimeline(); showNotesPanel();
+    }),
+  ));
+  box.appendChild(wrap);
+  box.appendChild(hint('Everything still open is a job the agent has not done. Ask it to “work '
+    + 'through my notes” and it reads them in order.'));
+}
+
+// ---------------------------------------------------------------- clips (the second video track)
+// A project used to hold exactly one video, so a tutorial — talking head plus screen capture —
+// could only be decorated, not edited. A clip is another piece of footage on the timeline: either
+// filling the frame for its window, or sitting in a box over it.
+async function addClip() {
+  const r = await E.pickClip();
+  if (!r?.path) return;
+  project.clips = project.clips || [];
+  project.clips.push({
+    manual: true, id: 'cl' + Date.now(), src: r.path,
+    start: +(timelineNow() || 0).toFixed(2),
+    dur: Math.min(r.duration || 4, 8) || 4,
+    in: 0, fit: 'full', fill: 'contain', mute: true,
+  });
+  project.clips.sort((a, b) => (a.start || 0) - (b.start || 0));
+  save(); renderTimeline();
+  select('clip', project.clips.findIndex((c) => c.id && String(c.id).startsWith('cl')
+    && Math.abs((c.start || 0) - +(timelineNow() || 0).toFixed(2)) < 0.5));
+}
+
+function renderClipInspector(box, e) {
+  box.appendChild(sechead('Clip'));
+  box.appendChild(hint((e.src || 'no file') + ' — the file stays where it is; the project points at it.'));
+
+  box.appendChild(rowOf([
+    field('Starts at', e.start ?? 0, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Length (s)', e.dur ?? 4, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  box.appendChild(rowOf([
+    field('From (s into the clip)', e.in ?? 0, (v) => { e.in = Math.max(0, +v); save(); }, 'number'),
+  ]));
+  box.appendChild(hint('“From” is which part of the source you want — the clip’s own clock, not the timeline’s.'));
+
+  box.appendChild(sep());
+  box.appendChild(sechead('Where it sits'));
+  const fitRow = document.createElement('div'); fitRow.className = 'btnrow';
+  const setFit = (v) => { e.fit = v; if (v === 'box') e.box = e.box || { x: 0.6, y: 0.06, w: 0.36, h: 0.36 };
+    save(); renderInspector(); renderTimeline(); };
+  fitRow.append(
+    btn((e.fit !== 'box' ? '✓ ' : '') + 'full frame', () => setFit('full')),
+    btn((e.fit === 'box' ? '✓ ' : '') + 'in a box', () => setFit('box')),
+  );
+  box.appendChild(fitRow);
+
+  if (e.fit === 'box') {
+    const b = e.box = e.box || { x: 0.6, y: 0.06, w: 0.36, h: 0.36 };
+    const set = (k) => (v) => { b[k] = clamp(+v, 0, 1); save(); renderTimeline(); };
+    box.appendChild(rowOf([
+      field('X (0–1)', b.x ?? 0.6, set('x'), 'number'),
+      field('Y (0–1)', b.y ?? 0.06, set('y'), 'number'),
+    ]));
+    box.appendChild(rowOf([
+      field('Width (0–1)', b.w ?? 0.36, set('w'), 'number'),
+      field('Height (0–1)', b.h ?? 0.36, set('h'), 'number'),
+    ]));
+    box.appendChild(hint('Fractions of the frame, not pixels — so the edit survives a change of resolution.'));
+  }
+
+  const fillRow = document.createElement('div'); fillRow.className = 'btnrow';
+  fillRow.append(
+    btn((e.fill !== 'cover' ? '✓ ' : '') + 'fit inside (letterbox)', () => { e.fill = 'contain'; save(); renderInspector(); }),
+    btn((e.fill === 'cover' ? '✓ ' : '') + 'fill (crop)', () => { e.fill = 'cover'; save(); renderInspector(); }),
+  );
+  box.appendChild(fillRow);
+  box.appendChild(hint(e.fill === 'cover'
+    ? 'Fills the space and crops whatever does not fit. Fine for scenery, bad for a screen recording — it will cut off the part you are pointing at.'
+    : 'Never crops. The right choice for a screen recording; you may see bars if the shapes differ.'));
+
+  box.appendChild(sep());
+  box.appendChild(btnRow(
+    btn(e.mute === false ? '✓ its sound is playing' : '✗ its sound is muted', () => {
+      e.mute = e.mute === false; save(); renderInspector();
+    }),
+    btn('Preview here', () => previewAround(e.start || 0, e.dur || 4)),
+    btn('Delete', () => remove()),
+  ));
+  box.appendChild(hint('A clip that straddles a cut is dropped at render time rather than landing '
+    + 'somewhere it was never meant to be — the check will tell you before you export.'));
+}
+
+// ---------------------------------------------------------------- finding material
+// Cutright hosts nothing and downloads nothing. This is a directory — and the reason it earns a
+// panel rather than a link is the licence on each entry. "Free" covers at least four different
+// things, and the difference between them is whether you can put the video behind a paywall.
+let mediaPanel = { kind: '', commercialOnly: true };
+
+async function showMediaPanel() {
+  const r = await E.media.sources(mediaPanel);
+  const sources = r?.sources || [];
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'find media';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'media';
+  const when = document.createElement('span'); when.textContent = `${sources.length} places`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const filters = document.createElement('div'); filters.className = 'btnrow';
+  const pick = (label, k) => btn((mediaPanel.kind === k ? '✓ ' : '') + label,
+    () => { mediaPanel.kind = k; showMediaPanel(); });
+  filters.append(pick('everything', ''), pick('video', 'video'), pick('stills', 'image'), pick('sound', 'audio'));
+  box.appendChild(filters);
+
+  const safe = document.createElement('div'); safe.className = 'btnrow';
+  safe.append(btn(`${mediaPanel.commercialOnly ? '✓' : '✗'} only what I can use in paid work`,
+    () => { mediaPanel.commercialOnly = !mediaPanel.commercialOnly; showMediaPanel(); }));
+  box.appendChild(safe);
+  box.appendChild(hint(mediaPanel.commercialOnly
+    ? 'Showing only sources whose licence permits commercial use outright. Sites where the licence '
+      + 'varies per item are hidden — they contain plenty you could use, but a list that mixes them '
+      + 'in is a list that is eventually wrong about something you shipped.'
+    : 'Showing everything, including sites where each item carries its own licence and some are not '
+      + 'for commercial use. Read the licence on the item, not the one on the site.'));
+
+  const list = document.createElement('div'); list.className = 'ac-list';
+  sources.forEach((s) => {
+    const row = document.createElement('div'); row.className = 'src-row';
+    const top = document.createElement('div'); top.className = 'src-top';
+    const nm = document.createElement('span'); nm.className = 'src-name'; nm.textContent = s.name;
+    const tag = document.createElement('span');
+    tag.className = 'src-lic ' + (s.licence.commercial === true ? 'good'
+      : s.licence.commercial === false ? 'bad' : 'mixed');
+    tag.textContent = s.licence.name;
+    top.append(nm, tag);
+    if (s.needsCredit) {
+      const cr = document.createElement('span'); cr.className = 'src-lic warn'; cr.textContent = 'credit required';
+      top.appendChild(cr);
+    }
+    const plain = document.createElement('div'); plain.className = 'src-plain'; plain.textContent = s.licence.plain;
+    const good = document.createElement('div'); good.className = 'src-note'; good.textContent = s.good;
+    const watch = document.createElement('div'); watch.className = 'src-watch'; watch.textContent = s.watch;
+    row.append(top, plain, good, watch);
+
+    const acts = document.createElement('div'); acts.className = 'btnrow';
+    acts.append(
+      btn('Open', () => E.openExternal(s.url)),
+      btn('Note the credit', async () => {
+        const t = prompt(`What did you take from ${s.name}? (title, and author if the licence needs one)`);
+        if (t == null) return;
+        const res = await E.media.credit({ source: s.id, title: t });
+        setStatus(res?.error ? 'Could not record it: ' + res.error
+          : `Credit recorded${res.credit.required ? ' — this one MUST appear in your description' : ''}`,
+          res?.error ? 'error' : 'ok');
+      }),
+      btn('Where do files go?', () => E.revealInFolder('project.json')),
+    );
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  box.appendChild(hint('Cutright downloads nothing and hosts nothing. Take what you need, drop it in '
+    + 'the project folder, and add it to the timeline.'));
+}
