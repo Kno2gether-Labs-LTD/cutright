@@ -36,6 +36,46 @@ def keep_segments(cuts,dur):
     if cur<dur: segs.append((cur,dur))
     return segs,cuts
 
+_ENCODER=None
+def pick_encoder():
+    """Which H.264 encoder to use.
+
+    Every Mac with real hardware has VideoToolbox and it is by far the fastest, so it stays the
+    default. But a virtualised Mac does not — a CI runner, a VM — and there the encoder opens and
+    then fails with "Could not open encoder before EOF", which looks like a broken project rather
+    than a missing GPU. So this asks rather than assumes, once per run.
+
+    The fallback order deliberately does NOT bake x264 into anything we ship: this only chooses
+    among the encoders the ffmpeg already on the machine happens to have (see
+    docs/decisions/0003-ffmpeg-not-bundled.md — we do not ship ffmpeg at all).
+    """
+    global _ENCODER
+    if _ENCODER: return _ENCODER
+    forced=os.environ.get("CVE_VIDEO_ENCODER")
+    if forced:
+        _ENCODER=forced; return _ENCODER
+    try:
+        have=subprocess.run(["ffmpeg","-hide_banner","-encoders"],capture_output=True,text=True,timeout=20).stdout
+    except Exception:
+        have=""
+    def works(name):
+        if name not in have: return False
+        # Listed is not the same as usable: VideoToolbox is listed on a VM and fails on first use.
+        try:
+            r=subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-f","lavfi",
+                              "-i","color=c=black:s=64x64:d=0.1","-c:v",name,"-f","null","-"],
+                             capture_output=True,text=True,timeout=30)
+            return r.returncode==0
+        except Exception:
+            return False
+    for name in ("h264_videotoolbox","libx264","libopenh264"):
+        if works(name):
+            if name!="h264_videotoolbox":
+                print(f"note: h264_videotoolbox is unavailable here, using {name}",file=sys.stderr)
+            _ENCODER=name; return _ENCODER
+    raise SystemExit("no usable H.264 encoder in this ffmpeg (tried videotoolbox, libx264, libopenh264)")
+
+
 def cut_cache_key(cuts,graded,camera,fps,dur,br):
     """Identity of a cut master: the cuts themselves plus the files they were made from."""
     import hashlib
@@ -102,7 +142,7 @@ def main():
     # A preview is watched once and thrown away; 14M would spend most of the render writing
     # bits nobody looks at, and leave >100MB intermediates behind for every rebuild.
     BR="3M" if a.preview else "14M"
-    HW=["-c:v","h264_videotoolbox","-b:v",BR,"-profile:v","high","-pix_fmt","yuv420p","-tag:v","avc1"]
+    HW=["-c:v",pick_encoder(),"-b:v",BR,"-profile:v","high","-pix_fmt","yuv420p","-tag:v","avc1"]
     d=P["captions"]["defaults"]
     def hxa(s): return s
 
