@@ -20,6 +20,7 @@ import { listAgents, byId as agentById, launchCommand, kickoffPrompt, resolveBin
 import { segmentsFrom, chunk as chunkTranscript, promptFor, parsePlan, merge as mergeCuts, SYSTEM as CUT_SYSTEM } from './cutplan.mjs';
 import * as llm from './llm.mjs';
 import { snapshot as guardSnapshot, diff as guardDiff, restore as guardRestore } from './guard.mjs';
+import * as media from './media-sources.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -1162,6 +1163,31 @@ function registerIpc() {
       system: 'Reply with JSON only.', user: 'Reply with exactly {"ok":true}', timeoutMs: 20_000 });
     if (!r.ok) return r;
     return { ok: true, text: String(r.text).slice(0, 120), usage: r.usage };
+  });
+
+  // Where to get footage, stills and sound you are allowed to use. We host nothing and download
+  // nothing — this is a directory, and the part that earns its place is the licence on each entry.
+  ipcMain.handle('media:sources', (_e, o = {}) => ({
+    sources: media.list(join(RES, 'data'), {
+      kind: ['video', 'image', 'audio'].includes(o.kind) ? o.kind : '',
+      commercialOnly: !!o.commercialOnly,
+    }),
+  }));
+
+  // Recorded at the moment the material is taken. Working out afterwards which of forty sounds
+  // needed crediting is a job nobody does.
+  ipcMain.handle('media:credit', (_e, o = {}) => {
+    if (!settings.work) return { error: 'no workspace open' };
+    const src = media.byId(join(RES, 'data'), String(o.source || ''));
+    if (!src) return { error: 'unknown source' };
+    try {
+      const p = JSON.parse(readFileSync(projectPath(), 'utf8'));
+      p.credits = p.credits || [];
+      const entry = media.creditFor(src, { title: o.title, author: o.author, url: o.url });
+      p.credits.push(entry);
+      writeFileSync(projectPath(), JSON.stringify(p, null, 2));
+      return { ok: true, credit: entry, total: p.credits.length };
+    } catch (e) { return { error: e.message }; }
   });
 
   // Which coding agent does the editing. Everything the app writes is agent-neutral — the brief

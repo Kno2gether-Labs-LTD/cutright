@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "note": "Where to get footage, stills and sound you are allowed to use. Cutright does not download anything and does not host anything — this is a directory, so the agent can point you at the right place and tell you what the licence asks of you before you commit to a clip.",
+  "licences": {
+    "cc0": { "name": "CC0 / public domain", "commercial": true, "attribution": "none", "modify": true,
+             "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+             "plain": "Do what you like. No credit needed." },
+    "cc-by": { "name": "CC BY", "commercial": true, "attribution": "required", "modify": true,
+               "url": "https://creativecommons.org/licenses/by/4.0/",
+               "plain": "Free to use commercially, but you MUST credit the creator." },
+    "cc-by-sa": { "name": "CC BY-SA", "commercial": true, "attribution": "required", "modify": true,
+                  "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+                  "plain": "Credit required, and anything you build from it carries the same licence. Read this one before using it in a client video." },
+    "cc-by-nc": { "name": "CC BY-NC", "commercial": false, "attribution": "required", "modify": true,
+                  "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+                  "plain": "NOT for commercial use. A monetised video counts as commercial." },
+    "pexels": { "name": "Pexels License", "commercial": true, "attribution": "appreciated", "modify": true,
+                "url": "https://www.pexels.com/license/",
+                "plain": "Free for commercial use, no credit required. You may not sell the file itself, or imply the people in it endorse you." },
+    "unsplash": { "name": "Unsplash License", "commercial": true, "attribution": "appreciated", "modify": true,
+                  "url": "https://unsplash.com/license",
+                  "plain": "Free for commercial use, no credit required. You may not build a competing stock service from it." },
+    "pixabay": { "name": "Pixabay Content License", "commercial": true, "attribution": "none", "modify": true,
+                 "url": "https://pixabay.com/service/license-summary/",
+                 "plain": "Free for commercial use, no credit required. You may not redistribute the file as-is on another stock site." },
+    "mixkit": { "name": "Mixkit License", "commercial": true, "attribution": "none", "modify": true,
+                "url": "https://mixkit.co/license/",
+                "plain": "Free for commercial use, no credit required. Music and SFX have their own terms — read them for paid work." },
+    "mixed": { "name": "Varies per item", "commercial": null, "attribution": "check", "modify": null,
+               "url": "", "plain": "Every item carries its OWN licence. You have to read the one on the item, not the one on the site." },
+    "non-commercial-site": { "name": "Personal / educational use only", "commercial": false, "attribution": "check", "modify": null,
+                             "url": "", "plain": "The site's own terms rule out commercial use. Not for a monetised or client video." }
+  },
+  "sources": [
+    { "id": "pexels-videos", "name": "Pexels Video", "kinds": ["video"], "licence": "pexels",
+      "url": "https://www.pexels.com/videos/", "api": "https://www.pexels.com/api/", "apiKey": true,
+      "good": "Modern, well-lit b-roll. The safest default for commercial work.",
+      "watch": "Search results are heavily weighted to a few popular clips — the same beach shot is in a lot of videos." },
+
+    { "id": "pixabay-videos", "name": "Pixabay Video", "kinds": ["video", "image", "audio"], "licence": "pixabay",
+      "url": "https://pixabay.com/videos/", "api": "https://pixabay.com/api/docs/", "apiKey": true,
+      "good": "One licence across footage, stills, music and effects, and no attribution to track.",
+      "watch": "Quality is uneven — plenty of it is upscaled or over-compressed. Check at full size before you commit." },
+
+    { "id": "mixkit-video", "name": "Mixkit", "kinds": ["video", "audio"], "licence": "mixkit",
+      "url": "https://mixkit.co/", "api": "", "apiKey": false,
+      "good": "Curated rather than crowd-sourced, so the hit rate is high. Good stingers and UI sounds.",
+      "watch": "The music and SFX licence differs from the video one. Read it for anything paid." },
+
+    { "id": "coverr", "name": "Coverr", "kinds": ["video"], "licence": "mixed",
+      "url": "https://coverr.co/", "api": "https://coverr.co/api", "apiKey": true,
+      "good": "Backgrounds and loops meant to sit behind text — which is most of what a tutorial needs.",
+      "watch": "Terms have changed more than once. Check the licence shown on the clip you are taking." },
+
+    { "id": "nasa", "name": "NASA Image and Video Library", "kinds": ["video", "image"], "licence": "cc0",
+      "url": "https://images.nasa.gov/", "api": "https://api.nasa.gov/", "apiKey": false,
+      "good": "Genuinely public domain, high resolution, and unlike anything on a stock site.",
+      "watch": "The NASA logo and identifiable people are NOT covered — you may not imply NASA endorses you." },
+
+    { "id": "archive-org", "name": "Internet Archive", "kinds": ["video", "audio", "image"], "licence": "mixed",
+      "url": "https://archive.org/", "api": "https://archive.org/advancedsearch.php", "apiKey": false,
+      "good": "Archive footage, old film, radio. Nothing else has this depth.",
+      "watch": "Uploads are user-submitted and the stated licence is often wrong. Treat it as a lead, not a clearance." },
+
+    { "id": "unsplash", "name": "Unsplash", "kinds": ["image"], "licence": "unsplash",
+      "url": "https://unsplash.com/", "api": "https://unsplash.com/developers", "apiKey": true,
+      "good": "The best-looking free photography on the web, and safe commercially.",
+      "watch": "Recognisable brands, logos and people appear constantly — that is a release problem, not a licence one." },
+
+    { "id": "openverse", "name": "Openverse", "kinds": ["image", "audio"], "licence": "mixed",
+      "url": "https://openverse.org/", "api": "https://api.openverse.org/v1/", "apiKey": false,
+      "good": "Searches many CC libraries at once and shows each item's licence up front.",
+      "watch": "It indexes CC BY-NC too. Filter to commercial use or you will pick something you cannot ship." },
+
+    { "id": "wikimedia", "name": "Wikimedia Commons", "kinds": ["image", "audio", "video"], "licence": "mixed",
+      "url": "https://commons.wikimedia.org/", "api": "https://commons.wikimedia.org/w/api.php", "apiKey": false,
+      "good": "Maps, diagrams, historical images and portraits you will not find elsewhere.",
+      "watch": "Mostly CC BY-SA — the share-alike clause can follow your video. Check before using it in client work." },
+
+    { "id": "met-open-access", "name": "The Met — Open Access", "kinds": ["image"], "licence": "cc0",
+      "url": "https://www.metmuseum.org/art/collection", "api": "https://metmuseum.github.io/", "apiKey": false,
+      "good": "Half a million CC0 artworks at very high resolution.",
+      "watch": "Only items marked Open Access. The rest of the collection is not." },
+
+    { "id": "smithsonian", "name": "Smithsonian Open Access", "kinds": ["image", "video"], "licence": "cc0",
+      "url": "https://www.si.edu/openaccess", "api": "https://api.si.edu/openaccess/api/v1.0/", "apiKey": true,
+      "good": "Millions of CC0 items with real metadata attached.",
+      "watch": "The API key is free but required." },
+
+    { "id": "freesound", "name": "Freesound", "kinds": ["audio"], "licence": "mixed",
+      "url": "https://freesound.org/", "api": "https://freesound.org/docs/api/", "apiKey": true,
+      "good": "The deepest library of real recorded sound effects there is.",
+      "watch": "Every sound has its own licence and plenty are CC BY-NC. Filter, and record the credit at the moment you download it — going back later is miserable." },
+
+    { "id": "fma", "name": "Free Music Archive", "kinds": ["audio"], "licence": "mixed",
+      "url": "https://freemusicarchive.org/", "api": "", "apiKey": false,
+      "good": "Real music by real artists rather than production loops.",
+      "watch": "Per-track licences, many requiring credit and some barring commercial use." },
+
+    { "id": "musopen", "name": "Musopen", "kinds": ["audio"], "licence": "mixed",
+      "url": "https://musopen.org/", "api": "", "apiKey": false,
+      "good": "Public-domain classical, including recordings — not just scores.",
+      "watch": "The composition being public domain does not make the RECORDING public domain. Check the recording's own licence." },
+
+    { "id": "incompetech", "name": "Incompetech (Kevin MacLeod)", "kinds": ["audio"], "licence": "cc-by",
+      "url": "https://incompetech.com/music/royalty-free/", "api": "", "apiKey": false,
+      "good": "Enormous, consistent, and genuinely usable commercially — if you credit it.",
+      "watch": "CC BY means the credit is mandatory, in the description. A paid licence removes that requirement." },
+
+    { "id": "bbc-sfx", "name": "BBC Sound Effects", "kinds": ["audio"], "licence": "non-commercial-site",
+      "url": "https://sound-effects.bbcrewind.co.uk/", "api": "", "apiKey": false,
+      "good": "Sixteen thousand archive effects, beautifully catalogued.",
+      "watch": "Personal, educational and research use ONLY under the RemArc licence. Not for a monetised video." }
+  ]
+}

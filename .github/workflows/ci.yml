@@ -37,6 +37,8 @@ jobs:
         run: node scripts/check-mcp.mjs
       - name: Hand edits survive the agent
         run: node scripts/check-guard.mjs
+      - name: Media directory (nothing non-commercial offered as safe)
+        run: node scripts/check-media-sources.mjs
       - name: Cut planning (a model may suggest, never edit)
         run: node scripts/check-cutplan.mjs
       - name: Preview time mapping (the app and the engine agree)

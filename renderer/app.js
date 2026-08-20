@@ -375,6 +375,7 @@ function initTimelineInteraction() {
   $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
   $('#btnStartAgent').onclick = () => startAgentEdit();
   $('#btnAgentBrief').onclick = () => showAgentBrief();
+  $('#btnMedia').onclick = () => showMediaPanel();
   $('#btnAgentPick').onclick = () => showAgentPicker();
   refreshAgents();
 
@@ -2938,3 +2939,80 @@ function skipPastCuts(t) {
 }
 video.addEventListener('timeupdate', () => skipPastCuts());
 video.addEventListener('seeked', () => skipPastCuts());
+
+// ---------------------------------------------------------------- finding material
+// Cutright hosts nothing and downloads nothing. This is a directory — and the reason it earns a
+// panel rather than a link is the licence on each entry. "Free" covers at least four different
+// things, and the difference between them is whether you can put the video behind a paywall.
+let mediaPanel = { kind: '', commercialOnly: true };
+
+async function showMediaPanel() {
+  const r = await E.media.sources(mediaPanel);
+  const sources = r?.sources || [];
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'find media';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'media';
+  const when = document.createElement('span'); when.textContent = `${sources.length} places`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const filters = document.createElement('div'); filters.className = 'btnrow';
+  const pick = (label, k) => btn((mediaPanel.kind === k ? '✓ ' : '') + label,
+    () => { mediaPanel.kind = k; showMediaPanel(); });
+  filters.append(pick('everything', ''), pick('video', 'video'), pick('stills', 'image'), pick('sound', 'audio'));
+  box.appendChild(filters);
+
+  const safe = document.createElement('div'); safe.className = 'btnrow';
+  safe.append(btn(`${mediaPanel.commercialOnly ? '✓' : '✗'} only what I can use in paid work`,
+    () => { mediaPanel.commercialOnly = !mediaPanel.commercialOnly; showMediaPanel(); }));
+  box.appendChild(safe);
+  box.appendChild(hint(mediaPanel.commercialOnly
+    ? 'Showing only sources whose licence permits commercial use outright. Sites where the licence '
+      + 'varies per item are hidden — they contain plenty you could use, but a list that mixes them '
+      + 'in is a list that is eventually wrong about something you shipped.'
+    : 'Showing everything, including sites where each item carries its own licence and some are not '
+      + 'for commercial use. Read the licence on the item, not the one on the site.'));
+
+  const list = document.createElement('div'); list.className = 'ac-list';
+  sources.forEach((s) => {
+    const row = document.createElement('div'); row.className = 'src-row';
+    const top = document.createElement('div'); top.className = 'src-top';
+    const nm = document.createElement('span'); nm.className = 'src-name'; nm.textContent = s.name;
+    const tag = document.createElement('span');
+    tag.className = 'src-lic ' + (s.licence.commercial === true ? 'good'
+      : s.licence.commercial === false ? 'bad' : 'mixed');
+    tag.textContent = s.licence.name;
+    top.append(nm, tag);
+    if (s.needsCredit) {
+      const cr = document.createElement('span'); cr.className = 'src-lic warn'; cr.textContent = 'credit required';
+      top.appendChild(cr);
+    }
+    const plain = document.createElement('div'); plain.className = 'src-plain'; plain.textContent = s.licence.plain;
+    const good = document.createElement('div'); good.className = 'src-note'; good.textContent = s.good;
+    const watch = document.createElement('div'); watch.className = 'src-watch'; watch.textContent = s.watch;
+    row.append(top, plain, good, watch);
+
+    const acts = document.createElement('div'); acts.className = 'btnrow';
+    acts.append(
+      btn('Open', () => E.openExternal(s.url)),
+      btn('Note the credit', async () => {
+        const t = prompt(`What did you take from ${s.name}? (title, and author if the licence needs one)`);
+        if (t == null) return;
+        const res = await E.media.credit({ source: s.id, title: t });
+        setStatus(res?.error ? 'Could not record it: ' + res.error
+          : `Credit recorded${res.credit.required ? ' — this one MUST appear in your description' : ''}`,
+          res?.error ? 'error' : 'ok');
+      }),
+      btn('Where do files go?', () => E.revealInFolder('project.json')),
+    );
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  box.appendChild(hint('Cutright downloads nothing and hosts nothing. Take what you need, drop it in '
+    + 'the project folder, and add it to the timeline.'));
+}

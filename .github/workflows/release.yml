@@ -34,6 +34,7 @@ jobs:
           node scripts/check-keys.mjs
           node scripts/check-mcp.mjs
           node scripts/check-guard.mjs
+          node scripts/check-media-sources.mjs
           node scripts/check-agents.mjs
           node scripts/check-library.mjs
           node scripts/check-cutplan.mjs

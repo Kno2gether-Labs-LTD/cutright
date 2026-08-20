@@ -170,6 +170,16 @@ contextBridge.exposeInMainWorld('editor', {
     softFillers: !!o.softFillers, ai: !!o.ai,
   }),
 
+  // --- where to get material you are allowed to use ---
+  media: {
+    sources: (o = {}) => ipcRenderer.invoke('media:sources', {
+      kind: str(o.kind), commercialOnly: !!o.commercialOnly,
+    }),
+    credit: (o = {}) => ipcRenderer.invoke('media:credit', {
+      source: str(o.source), title: str(o.title), author: str(o.author), url: str(o.url),
+    }),
+  },
+
   // --- protecting hand edits from the agent's rewrite ---
   guard: {
     snapshot: () => ipcRenderer.invoke('guard:snapshot'),

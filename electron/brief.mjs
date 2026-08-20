@@ -136,6 +136,20 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       // Generation is listed, never performed, here. Anything added later — an MCP server,
       // an image or video generation API — appends an entry in this shape: what it makes,
       // whether it is configured, and the exact way to call it.
+      // Where to get material the user is ALLOWED to use. Cutright hosts nothing and downloads
+      // nothing; this tells the agent the directory exists and, more importantly, that "free" is
+      // not one thing. The rule below is the whole reason it is in the brief.
+      mediaSources: {
+        catalogue: 'data/media-sources.json (in the app), or ask the user to open Find media',
+        rule: 'NEVER tell the user something is free to use. Name the licence. If it requires '
+            + 'attribution, say so and record it in project.credits[]. If the licence varies per '
+            + 'item, say that the item itself must be checked — the site does not decide it.',
+        neverDo: 'download material on the user\'s behalf, or add a clip to the project that the '
+               + 'user has not obtained and cleared themselves',
+        credits: 'project.credits[] — each { source, title, author, url, licence, required }. '
+               + 'Anything with required:true has to appear in the video description.',
+      },
+
       mediaGeneration: {
         audio: {
           provider: 'elevenlabs',

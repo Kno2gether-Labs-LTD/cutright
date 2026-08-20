@@ -36,7 +36,8 @@
     "check:agents": "node scripts/check-agents.mjs",
     "check:preview": "node scripts/check-preview.mjs",
     "check:cutplan": "node scripts/check-cutplan.mjs",
-    "check:guard": "node scripts/check-guard.mjs"
+    "check:guard": "node scripts/check-guard.mjs",
+    "check:media": "node scripts/check-media-sources.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -63,6 +64,7 @@
       "renderer/**/*",
       "engine/**/*",
       "templates/**/*",
+      "data/**/*",
       "schema/**/*",
       "docs/GETTING_STARTED.md",
       "package.json",
@@ -73,7 +75,8 @@
       "**/node_modules/node-pty/**/*",
       "engine/**/*",
       "templates/**/*",
-      "docs/**/*"
+      "docs/**/*",
+      "data/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",
