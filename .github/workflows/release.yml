@@ -82,13 +82,29 @@ jobs:
           codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier|flags" || true
           codesign -d -r- "$APP" 2>&1 | grep designated || true
           spctl -a -vvv "$APP" 2>&1 | head -3 || true
-          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
-            codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
-              || { echo "::error::signing secrets were present but the app is not Developer ID signed"; exit 1; }
-            codesign --verify --deep --strict "$APP" || { echo "::error::the signature does not verify"; exit 1; }
-            xcrun stapler validate "$APP" \
-              || echo "::warning::not notarized — Gatekeeper will warn on first launch until it is"
-          fi
+          [ "${{ steps.signing.outputs.signed }}" = "true" ] || exit 0
+
+          # Nothing here may depend on the leaf certificate's NAME. APPLE_SIGN_IDENTITY is a
+          # secret, so GitHub redacts that string everywhere it appears — an earlier version
+          # grepped for "Authority=Developer ID Application" and failed a build that was
+          # correctly signed AND notarized, because the log said "Authority=***".
+          #
+          # The intermediate and the root are not secret, and Gatekeeper's verdict is the thing
+          # a user actually experiences, so assert on those.
+          codesign --verify --deep --strict "$APP" \
+            || { echo "::error::the signature does not verify"; exit 1; }
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID Certification Authority" \
+            || { echo "::error::signing secrets were present but this is not a Developer ID chain"; exit 1; }
+
+          VERDICT=$(spctl -a -vvv "$APP" 2>&1 || true)
+          case "$VERDICT" in
+            *accepted*) : ;;
+            *) echo "::error::Gatekeeper rejected the build: $VERDICT"; exit 1 ;;
+          esac
+          case "$VERDICT" in
+            *Notarized*) echo "notarized — this opens on another Mac with no warning" ;;
+            *) echo "::warning::signed but NOT notarized — Gatekeeper will warn on first launch" ;;
+          esac
 
       # Only a signed build is attached. An unsigned one would REPLACE the signed asset of the
       # same name on a re-run, quietly turning a signed release into an unsigned one.
