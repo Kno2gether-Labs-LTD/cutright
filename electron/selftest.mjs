@@ -27,7 +27,9 @@ export async function runEditTests({ win, settings, app }) {
   // what happened on a slower CI runner while it passed every time locally.
   const settle = async (ms = 4000) => {
     const started = Date.now();
-    await wait(120);
+    // Keep the initial pause generous. settle() is used after UI actions as well as saves, and
+    // shortening it to 120ms was enough to make a panel-render test read an empty inspector.
+    await wait(250);
     while (Date.now() - started < ms) {
       const pending = await js(`(() => {
         if (window.__cve && 'saving' in window.__cve) return window.__cve.saving;
