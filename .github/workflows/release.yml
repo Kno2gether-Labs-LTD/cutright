@@ -124,7 +124,7 @@ jobs:
 
       - name: Keep the unsigned build as an artifact instead
         if: steps.signing.outputs.signed != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Cutright-unsigned-dmg
           path: dist/*.dmg
