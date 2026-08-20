@@ -136,6 +136,18 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       // Generation is listed, never performed, here. Anything added later — an MCP server,
       // an image or video generation API — appends an entry in this shape: what it makes,
       // whether it is configured, and the exact way to call it.
+      // Notes are the closest thing the app has to a conversation. Everything else records what
+      // the user WANTS; a note records what they think is WRONG, at the moment they thought it.
+      notes: {
+        where: 'project.json → notes[] — { id, at, text, by, done, reply }',
+        meaning: 'each one is a job at a moment in the video, written while watching it',
+        howToWork: 'read them in time order, do the work, write what you did into `reply`, and '
+                 + 'set done:true. Do not edit the user\'s `text` — those are their words.',
+        ifYouDisagree: 'say so in `reply` and leave done:false. A note you cannot honour is a '
+                     + 'conversation, not a failure — never silently drop one.',
+        yourOwn: 'you may add a note with by:"agent" to raise something the user should look at.',
+      },
+
       mediaGeneration: {
         audio: {
           provider: 'elevenlabs',

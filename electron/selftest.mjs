@@ -1220,6 +1220,56 @@ export async function runEditTests({ win, settings, app }) {
     return { start: Math.round(start), wider: Math.round(wider), capped: Math.round(capped.rail) };
   });
 
+  await test('notes: a note pins a job to a moment, and survives to disk', async () => {
+    // Directing an editor is mostly saying "this bit drags" at a particular moment. The note has
+    // to land at the moment you said it, keep your words, and be visible on the track.
+    const before = (disk().notes || []).length;
+    // Pause first: a note lands wherever the playhead IS, which is correct behaviour but makes
+    // the assertion meaningless if the video is still running under it.
+    await js(`document.querySelector('#video').pause()`);
+    await js(`window.__cve.seek(${at(0.42)})`);
+    await wait(150);
+    // Where the playhead ACTUALLY is, which is not always where you asked: land inside a cut and
+    // the player skips past it. The note belongs at the playhead, so that is what to compare to.
+    const playhead = await js(`window.__cve.now()`);
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))`);
+    await settle();
+
+    let d = disk();
+    expect((d.notes || []).length === before + 1, `a note was not added (${(d.notes || []).length})`);
+    const n = d.notes[d.notes.length - 1];
+    expect(Math.abs(n.at - playhead) < 0.1, `the note landed at ${n.at}, playhead was ${playhead.toFixed(2)}`);
+    expect(n.done === false && n.by === 'you', 'a new note should be open and attributed to the user');
+
+    // Typing into it saves without a button.
+    await js(`(() => { const t = document.querySelector('#noteText');
+      t.value = 'this drags — tighten it'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await settle();
+    d = disk();
+    expect(d.notes[d.notes.length - 1].text === 'this drags — tighten it',
+      'the note text did not reach disk: ' + JSON.stringify(d.notes[d.notes.length - 1].text));
+
+    const pins = await js(`document.querySelectorAll('#laneNotes .note-pin').length`);
+    expect(pins === (d.notes || []).length, `${pins} pins on the track for ${d.notes.length} notes`);
+
+    // The verifier should mention it rather than let an export be a surprise.
+    const v = await js(`(async () => await window.editor.verify())()`, true);
+    expect((v.issues || []).some((i) => /note/i.test(i.what)),
+      'the check does not mention an open note: ' + JSON.stringify((v.issues || []).map((i) => i.what)));
+
+    // Marking it done takes it out of the way.
+    await js(`(() => { const b = [...document.querySelectorAll('#inspector button')]
+      .find(x => /Mark done/.test(x.textContent)); b.click(); })()`);
+    await settle();
+    expect(disk().notes[disk().notes.length - 1].done === true, 'marking done did not stick');
+
+    const restore = disk();
+    restore.notes = (restore.notes || []).slice(0, before);
+    await writeProject(restore);
+    await settle();
+    return { at: n.at, pins };
+  });
+
   await test('captions: several can be selected together and moved with the keyboard', async () => {
     const cues = disk().captions?.cues || [];
     if (cues.length < 3) return { skipped: 'not enough cues in this project' };

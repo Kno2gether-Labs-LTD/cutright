@@ -294,6 +294,19 @@ function renderTimeline() {
     la.appendChild(el);
   }));
 
+  // notes — a marker where you said something, and whether it has been dealt with
+  const ln = $('#laneNotes'); ln.innerHTML = '';
+  (project.notes || []).forEach((n, i) => {
+    const el = document.createElement('div');
+    el.className = 'note-pin' + (n.done ? ' done' : '') + (n.by === 'agent' ? ' fromagent' : '');
+    el.style.left = t2x(n.at || 0) + 'px';
+    el.textContent = n.done ? '✓' : '●';
+    el.title = `${n.text || '(empty note)'}${n.reply ? '\n↳ ' + n.reply : ''}\n${fmt(n.at || 0)}`;
+    if (sel?.kind === 'note' && sel.index === i) el.classList.add('selected');
+    el.onclick = (ev) => { ev.stopPropagation(); select('note', i); };
+    ln.appendChild(el);
+  });
+
   positionPlayhead();
 }
 
@@ -521,6 +534,7 @@ function elemOf(s) {
   if (!s || !project) return null;
   if (s.kind === 'scene') return project.scenes?.[s.index];
   if (s.kind === 'caption') return project.captions?.cues?.[s.index];
+  if (s.kind === 'note') return project.notes?.[s.index];
   if (s.kind === 'music') return project.audio?.music?.[s.index];
   if (s.kind === 'sfx') return project.audio?.sfx?.[s.index];
   if (s.kind === 'cut') return project.cuts?.[s.index];
@@ -597,6 +611,7 @@ function renderInspector() {
   h.append(title, btn('Delete', remove, 'danger'));
   box.appendChild(h);
 
+  if (sel.kind === 'note') return renderNoteInspector(box, e);
   if (sel.kind === 'caption') renderCaptionInspector(box, e);
   else if (sel.kind === 'scene') renderSceneInspector(box, e);
   else if (sel.kind === 'cut') renderCutInspector(box, e);
@@ -1081,6 +1096,7 @@ function remove() {
   if (!sel) return;
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
+  else if (sel.kind === 'note') project.notes.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
   else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
   else if (sel.kind === 'zoom') project.zooms.splice(sel.index, 1);
@@ -1119,6 +1135,7 @@ document.addEventListener('click', (ev) => {
     if (k === 'cut') return addCut();
     if (k === 'zoom') return addZoom();
     if (k === 'frame') return addFrame();
+    if (k === 'note') return addNote();
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({
@@ -2654,6 +2671,7 @@ function initKeys() {
       case 'Home': seekTimeline(0); break;
       case 'End': seekTimeline(dur - 0.1); break;
       case 's': case 'S': if (project) addCut(); break;
+      case 'n': case 'N': if (project) addNote(); break;
       case 'Backspace': case 'Delete':
         if (tx.open && tx.sel) { ev.preventDefault(); cutSelection(); }
         else if (sel) { ev.preventDefault(); remove(); }
@@ -2938,3 +2956,100 @@ function skipPastCuts(t) {
 }
 video.addEventListener('timeupdate', () => skipPastCuts());
 video.addEventListener('seeked', () => skipPastCuts());
+
+// ---------------------------------------------------------------- notes
+// Directing an editor is mostly saying "this bit drags" at a particular moment. A note is that
+// sentence, pinned to a time, and the agent treats it as work to do rather than commentary — it
+// answers, and marks it done. Nothing else in the app is a conversation; this is.
+function addNote() {
+  if (!project) return;
+  project.notes = project.notes || [];
+  const at = +(timelineNow() || 0).toFixed(2);
+  project.notes.push({ id: 'n' + Date.now().toString(36), at, text: '', by: 'you',
+                       done: false, reply: null, createdAt: new Date().toISOString() });
+  project.notes.sort((a, b) => (a.at || 0) - (b.at || 0));
+  save(); renderTimeline();
+  const i = project.notes.findIndex((n) => Math.abs(n.at - at) < 0.005 && !n.text);
+  select('note', i < 0 ? project.notes.length - 1 : i);
+  // Straight into typing: a note you have to click twice to write is a note nobody writes.
+  setTimeout(() => { const f = $('#noteText'); if (f) { f.focus(); } }, 60);
+}
+
+function renderNoteInspector(box, e) {
+  box.appendChild(sechead(`Note at ${fmt(e.at || 0)}`));
+
+  const wrap = document.createElement('div'); wrap.className = 'field';
+  const l = document.createElement('label');
+  l.textContent = 'What should change here';
+  const ta = document.createElement('textarea');
+  ta.id = 'noteText'; ta.rows = 3; ta.value = e.text || '';
+  ta.placeholder = 'this drags — tighten it';
+  ta.oninput = () => { e.text = ta.value; save(); };
+  ta.onblur = () => renderTimeline();
+  wrap.append(l, ta); box.appendChild(wrap);
+
+  if (e.reply) {
+    box.appendChild(sechead('The agent answered'));
+    box.appendChild(hint(e.reply));
+  }
+
+  box.appendChild(btnRow(
+    btn(e.done ? '✓ Done — reopen' : 'Mark done', () => {
+      e.done = !e.done; save(); renderTimeline(); renderInspector();
+    }, e.done ? '' : 'primary'),
+    btn('Play from here', () => { seekTimeline(Math.max(0, (e.at || 0) - 1)); video.play().catch(() => {}); }),
+    btn('Delete', () => { remove(); }),
+  ));
+  box.appendChild(hint('The agent reads notes[] and treats each one as a job: it does the work, '
+    + 'writes what it did, and marks the note done. Yours stay yours — it never edits your words.'));
+  box.appendChild(btnRow(btn('All notes', () => showNotesPanel())));
+}
+
+function showNotesPanel() {
+  const notes = project?.notes || [];
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'notes';
+  const open = notes.filter((n) => !n.done).length;
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'notes';
+  const when = document.createElement('span');
+  when.textContent = notes.length ? `${open} open of ${notes.length}` : 'none yet';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  if (!notes.length) {
+    box.appendChild(hint('Press N while watching to leave a note at that moment — "this drags", '
+      + '"wrong word", "cut to the screen here". The agent picks them up as a list of jobs.'));
+    box.appendChild(btnRow(btn('Leave one now', () => addNote(), 'primary')));
+    return;
+  }
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const list = document.createElement('div'); list.className = 'ac-list';
+  notes.forEach((n, i) => {
+    const row = document.createElement('div'); row.className = 'ac-item' + (n.done ? ' spent' : '');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!n.done;
+    cb.onclick = (ev) => { ev.stopPropagation(); n.done = cb.checked; save(); renderTimeline(); showNotesPanel(); };
+    const t = document.createElement('span'); t.className = 't'; t.textContent = fmt(n.at || 0);
+    const lbl = document.createElement('span'); lbl.className = 'lbl';
+    lbl.textContent = n.text || '(empty)';
+    row.append(cb, t, lbl);
+    if (n.reply) { const r = document.createElement('span'); r.className = 'rsn change'; r.textContent = 'answered'; row.appendChild(r); }
+    row.onclick = () => select('note', i);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  wrap.appendChild(btnRow(
+    btn('Leave another', () => addNote(), 'primary'),
+    btn('Clear the done ones', () => {
+      project.notes = (project.notes || []).filter((n) => !n.done);
+      save(); renderTimeline(); showNotesPanel();
+    }),
+  ));
+  box.appendChild(wrap);
+  box.appendChild(hint('Everything still open is a job the agent has not done. Ask it to “work '
+    + 'through my notes” and it reads them in order.'));
+}

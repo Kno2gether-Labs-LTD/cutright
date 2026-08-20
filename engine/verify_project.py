@@ -20,6 +20,16 @@ def check(P, root="."):
     def bad(sev, what, detail, fix): issues.append(dict(severity=sev, what=what, detail=detail, fix=fix))
     check_hand_edits(P, root, bad)
 
+    # Notes are jobs the user left at a moment in the video. Exporting with some still open is
+    # allowed — they may be for later — but it should never be a surprise.
+    notes = P.get("notes") or []
+    open_notes = [n for n in notes if isinstance(n, dict) and not n.get("done")]
+    if open_notes:
+        first = open_notes[0]
+        bad("warn", f"{len(open_notes)} note(s) still open",
+            f'the first is at {float(first.get("at", 0)):.1f}s: "{str(first.get("text") or "")[:60]}"',
+            "work through them and set done:true, or say in `reply` why you are leaving one")
+
     meta = P.get("meta") or {}
     dur = float(meta.get("duration") or 0)
     cuts = sorted([(float(c["start"]), float(c["end"])) for c in P.get("cuts") or []])
