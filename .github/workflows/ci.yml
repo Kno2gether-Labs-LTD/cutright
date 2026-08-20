@@ -96,7 +96,7 @@ jobs:
         run: node scripts/check-preview.mjs
       - name: Publish the result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-report
           path: out/
@@ -115,7 +115,7 @@ jobs:
       - run: npm run pack
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Cutright-mac-arm64
           path: dist/mac-arm64/Cutright.app
