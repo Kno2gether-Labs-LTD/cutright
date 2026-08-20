@@ -1,0 +1,100 @@
+name: Release
+
+# Tag-driven. `./scripts/release.sh v0.1.0` pushes the tag; this builds what ships from it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write        # needed to attach the build to the release, nothing more
+
+jobs:
+  macos:
+    name: macOS (signed)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run rebuild
+
+      # Everything that does not need a machine or a certificate. A release that fails these
+      # is not a release.
+      - name: Static checks
+        run: |
+          node scripts/check-licence-posture.mjs
+          node scripts/check-keys.mjs
+          node scripts/check-mcp.mjs
+          node scripts/check-guard.mjs
+          node scripts/check-agents.mjs
+          node scripts/check-library.mjs
+          node scripts/check-cutplan.mjs
+          CVE_SKIP_RENDER=1 node scripts/check-preview.mjs
+          node scripts/check-signing.mjs
+
+      # Is this build going to be signed? Said once, so every later step agrees.
+      - name: Decide whether we can sign
+        id: signing
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+        run: |
+          if [ -n "$CERT" ]; then echo "signed=true" >> "$GITHUB_OUTPUT";
+          else echo "signed=false" >> "$GITHUB_OUTPUT"; echo "::warning::No signing certificate in secrets — building UNSIGNED"; fi
+
+      # electron-builder imports the .p12 into a keychain of its own making and throws it away
+      # afterwards, which is why this does not shell out to `security` and does not leave a
+      # certificate lying around on the runner.
+      - name: Build (signed + notarized)
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+        run: |
+          npm run vendor
+          npx electron-builder --mac dmg --arm64 \
+            -c.mac.identity="${SIGN_IDENTITY:-Developer ID Application}" \
+            -c.mac.hardenedRuntime=true \
+            -c.mac.gatekeeperAssess=false
+
+      - name: Build (unsigned)
+        if: steps.signing.outputs.signed != 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      # A release that claims to be signed and is not would be worse than an unsigned one, so
+      # this asserts rather than reports.
+      - name: Check what actually came out
+        run: |
+          APP="dist/mac-arm64/Cutright.app"
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier|flags" || true
+          codesign -d -r- "$APP" 2>&1 | grep designated || true
+          spctl -a -vvv "$APP" 2>&1 | head -3 || true
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+              || { echo "::error::signing secrets were present but the app is not Developer ID signed"; exit 1; }
+            codesign --verify --deep --strict "$APP" || { echo "::error::the signature does not verify"; exit 1; }
+            xcrun stapler validate "$APP" \
+              || echo "::warning::not notarized — Gatekeeper will warn on first launch until it is"
+          fi
+
+      - name: Attach the build to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          draft: true                     # a person decides when it goes public
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

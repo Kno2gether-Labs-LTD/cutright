@@ -70,6 +70,47 @@ poor connection, a failure on none.
 
 Both hooks are no-ops without the Apple credentials, so an unsigned local build keeps working.
 
+## Signing in CI
+
+`.github/workflows/release.yml` builds what ships when a `v*` tag is pushed. It signs with the
+same certificate, from GitHub's encrypted secrets — nothing about signing lives in the repo.
+
+Set it up once, from the Mac that has the certificate:
+
+```
+./scripts/ci-signing-secrets.sh
+```
+
+That exports the certificate and its private key as a password-protected `.p12`, uploads it and a
+freshly generated passphrase as encrypted Actions secrets, and deletes the local copy. macOS will
+ask permission to export the key — that prompt is the security boundary, which is why the script
+is yours to run rather than something automation does quietly.
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | the certificate and private key, base64 |
+| `MACOS_CERTIFICATE_PASSWORD` | the passphrase protecting it |
+| `APPLE_SIGN_IDENTITY` | the identity name to sign as |
+| `APPLE_TEAM_ID` | the team, for notarization |
+| `APPLE_ID` | your Apple ID, for notarization |
+| `APPLE_APP_SPECIFIC_PASSWORD` | from appleid.apple.com, for notarization |
+
+The workflow hands `CSC_LINK` and `CSC_KEY_PASSWORD` to electron-builder, which imports them into
+a keychain of its own making and discards it afterwards — so nothing shells out to `security` and
+no certificate is left on the runner. Secrets are masked in logs by GitHub, and none of them are
+echoed.
+
+Two deliberate behaviours:
+
+- **Without the secrets it still builds**, unsigned, with a warning. A fork or a pull request must
+  not fail because it cannot see your certificate.
+- **With them, it asserts.** If the secrets were present but the app did not come out
+  Developer ID signed, the job fails rather than publishing something that claims to be signed and
+  is not. Notarization missing is a warning, not a failure, so a signed build can still ship while
+  the app-specific password is being set up.
+
+The release is attached as a **draft**. Publishing is a decision, and a person makes it.
+
 ## Which one do I have?
 
 ```

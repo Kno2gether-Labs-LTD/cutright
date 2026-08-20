@@ -7,3 +7,15 @@ out/
 renderer/vendor/
 private/
 .cutright-signing/
+
+# Signing material must never be committable, even by accident.
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.p8
+
+# Per-project working directories the app and engine create
+.preview-cache/
+.cve_render/
+.cutright/
