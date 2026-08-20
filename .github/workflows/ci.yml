@@ -19,7 +19,7 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - name: Syntax check every source file
@@ -59,7 +59,7 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - name: Rebuild native modules for Electron
@@ -108,7 +108,7 @@ jobs:
     needs: [checks]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npm run rebuild
