@@ -112,6 +112,10 @@ jobs:
         if: steps.signing.outputs.signed == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          # On a tag push ref_name IS the tag; on a manual run it is "main", which the action
+          # cannot attach to — it asked GitHub for "the release for tag refs/heads/main" and got
+          # a 400. Say the tag explicitly so both ways in work.
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: dist/*.dmg
           draft: true                     # a person decides when it goes public
           generate_release_notes: true
