@@ -150,6 +150,11 @@ video { max-width: 100%; max-height: 100%; outline: none; }
 .hsplit { height: 6px; background: var(--line-soft); cursor: row-resize; flex: none; }
 .vsplit { width: 6px; background: var(--line-soft); cursor: col-resize; flex: none; }
 .hsplit:hover, .vsplit:hover { background: #333947; }
+.hsplit:focus-visible, .vsplit:focus-visible { background: var(--accent); outline: none; }
+/* While a drag is in progress the cursor must not flicker as it crosses other elements, and a
+   stray text selection turns a resize into a highlight. */
+body.resizing-x, body.resizing-x * { cursor: col-resize !important; user-select: none !important; }
+body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select: none !important; }
 
 /* ---------------------------------------------------------------- timeline */
 .timeline-panel {
@@ -434,7 +439,22 @@ select:focus { outline: none; border-color: #46506a; }
 .home-by { font-size: 11px; color: var(--dim); letter-spacing: 1.4px; text-transform: uppercase; margin-top: 4px; }
 .home-by a { color: var(--accent); text-decoration: none; }
 
-.hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; margin-bottom: 30px; }
+/* Flex rather than grid so a splitter can sit between the two cards and actually change one of
+   them. The list is what a returning user came here for, so it takes the space and the pitch is
+   sized to its content. Both are draggable and remembered. */
+.hero { display: flex; align-items: stretch; gap: 0; margin-bottom: 30px; }
+.hero > .hero-card { flex: 0 0 340px; min-width: 0; }
+.hero > .recent-card { flex: 1 1 auto; min-width: 0; }
+/* Without this the monospace paths in the project rows refuse to shrink — a grid or flex item is
+   min-width:auto by default — so they were stealing width from the card next door and the
+   ellipsis never had a chance to do its job. */
+.hero-split { background: transparent; width: 22px; border-radius: 3px; position: relative; }
+.hero-split::after {
+  content: ''; position: absolute; inset: 12px 9px; border-radius: 3px; background: var(--line);
+  transition: background .12s ease;
+}
+.hero-split:hover::after, .hero-split:focus-visible::after { background: var(--accent); }
+.hero-split:focus-visible { outline: none; }
 .hero-card {
   background: linear-gradient(155deg, var(--panel-2), var(--ink) 70%);
   border: 1px solid var(--line); border-radius: 16px; padding: 26px 28px; position: relative; overflow: hidden;
@@ -455,7 +475,11 @@ select:focus { outline: none; border-color: #46506a; }
 .recent-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 9px;
   background: var(--panel-2); border: 1px solid var(--line-soft); cursor: pointer; text-align: left; width: 100%; }
 .recent-item:hover { border-color: oklch(55% 0.12 85); }
-.recent-item .rn { font-size: 12.5px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* `flex: 1` is basis 0, so the name only ever got the scraps left after the badge, the detail
+   line and the path had taken theirs — which is how a row ended up reading "2026-08-20 02…".
+   A real basis and a floor make the name the thing that survives. */
+.recent-item .rn { font-size: 12.5px; font-weight: 600; flex: 1 1 44%; min-width: 16ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-item .rp { font-size: 10.5px; color: var(--dim); font-family: var(--font-mono); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; direction: rtl; max-width: 190px; }
 .recent-empty { font-size: 12px; color: var(--dim); line-height: 1.6; }
@@ -511,7 +535,10 @@ select:focus { outline: none; border-color: #46506a; }
   font-size: 11px; color: var(--dim); border-top: 1px solid var(--line-soft); padding-top: 16px; }
 .home-foot a { color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 900px) {
-  .hero, .feats, .promo-grid { grid-template-columns: 1fr; }
+  .hero { flex-direction: column; }
+  .hero > .hero-card { flex: 0 0 auto; }
+  .hero-split { display: none; }
+  .feats, .promo-grid { grid-template-columns: 1fr; }
 }
 
 .term-head { display: flex; align-items: center; gap: 8px; }

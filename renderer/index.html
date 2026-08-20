@@ -48,7 +48,8 @@
       </div>
     </div>
 
-    <div class="hsplit" id="splitTimeline" title="Drag to resize the timeline"></div>
+    <div class="hsplit" id="splitTimeline" data-panel="timeline" data-target="#timelinePanel"
+         data-axis="y" data-min="132" data-reserve="240"></div>
 
     <section class="timeline-panel" id="timelinePanel">
       <div class="tl-toolbar">
@@ -106,7 +107,8 @@
     </section>
   </section>
 
-  <div class="vsplit" id="splitRail" title="Drag to resize the panel"></div>
+  <div class="vsplit" id="splitRail" data-panel="rail" data-target="#rail"
+       data-axis="x" data-min="260" data-reserve="520"></div>
 
   <aside class="rail" id="rail">
     <div class="rail-head">
@@ -116,7 +118,8 @@
     <div class="inspector" id="inspector">
       <div class="empty">Select a scene, caption, cut, overlay or audio layer on the timeline.</div>
     </div>
-    <div class="hsplit" id="splitTerm" title="Drag to resize the terminal"></div>
+    <div class="hsplit" id="splitTerm" data-panel="terminal" data-target=".term"
+         data-axis="y" data-min="80" data-reserve="200"></div>
     <div class="term">
       <div class="term-head">
         <span>Agent</span>
@@ -157,6 +160,9 @@
           <button id="homeOpen">Open a project…</button>
         </div>
       </div>
+
+      <div class="vsplit hero-split" data-panel="home-hero" data-target=".hero-card"
+           data-axis="x" data-min="240" data-reserve="420"></div>
 
       <div class="recent-card">
         <h3>Recent projects</h3>
@@ -200,7 +206,8 @@
 
     <div class="home-foot">
       <span>Cutright — open source (Apache-2.0). Needs ffmpeg and Python 3 + Pillow.</span>
-      <span><a href="#" id="homeEnv">Check environment</a> · <a href="#" id="homeLogs">Open logs</a></span>
+      <span><a href="#" id="homeEnv">Check environment</a> · <a href="#" id="homeLogs">Open logs</a>
+        · <a href="#" id="homeResetLayout" title="Put every panel back to its default size">Reset layout</a></span>
     </div>
   </div>
 </div>
@@ -286,6 +293,7 @@
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
 <script src="timemap.js"></script>
+<script src="panels.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

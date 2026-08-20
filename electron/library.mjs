@@ -27,7 +27,11 @@ function readInfo(dir, originHint = null) {
   const rec = p.recording || null;
   const info = {
     dir,
-    name: meta.title || basename(dir),
+    // Recording folders are named "<stamp> <title>", and the row already says when it was made —
+    // so the stamp costs a dozen characters to repeat something shown two columns to the right,
+    // and pushes the part that identifies the take out of the row. Keep it only if it is all
+    // there is.
+    name: meta.title || basename(dir).replace(/^\d{4}-\d{2}-\d{2} \d{4} (?=\S)/, '') || basename(dir),
     // `origin` is stamped when the project is created. Older projects predate it, and an
     // unreadable one tells us nothing at all — so fall back to the evidence, in order: a
     // recording block, then where the folder lives. Calling a take "from a video" because its

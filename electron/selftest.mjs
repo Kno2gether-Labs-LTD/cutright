@@ -1154,6 +1154,72 @@ export async function runEditTests({ win, settings, app }) {
     return { added: added.length, x: z.x, y: z.y, start: z.start };
   });
 
+  await test('layout: panels resize, stay within reach, remember, and reset', async () => {
+    // An editor is somewhere people sit for hours and everyone arranges it differently. What must
+    // not happen is a drag that goes the wrong way, one that lets a panel swallow the thing next
+    // to it, or a size that is forgotten by the next launch.
+    const width = () => js(`document.querySelector('#rail').getBoundingClientRect().width`);
+    const stored = () => js(`localStorage.getItem('cutright.layout.rail')`);
+
+    await js(`(() => { localStorage.removeItem('cutright.layout.rail');
+      const r = document.querySelector('#rail'); r.style.removeProperty('width'); r.style.removeProperty('flex'); })()`);
+    await wait(120);
+    const start = await width();
+
+    // Drag the splitter LEFT. The rail is to its right, so it must get wider.
+    const dragBy = (sel, dx) => js(`(() => {
+      const h = document.querySelector('${sel}');
+      const b = h.getBoundingClientRect();
+      const x = b.left + b.width / 2, y = b.top + b.height / 2;
+      h.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, pointerId: 1 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x + ${dx}, clientY: y, pointerId: 1 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x + ${dx}, clientY: y, pointerId: 1 }));
+      return true;
+    })()`);
+
+    await dragBy('#splitRail', -80);
+    await wait(150);
+    const wider = await width();
+    expect(wider > start + 40, `dragging left should widen the rail: ${start} → ${wider}`);
+    expect(String(await stored() ?? '') !== '', 'the new size was not remembered');
+
+    await dragBy('#splitRail', 60);
+    await wait(150);
+    const narrower = await width();
+    expect(narrower < wider - 20, `dragging right should narrow it: ${wider} → ${narrower}`);
+
+    // It must not be draggable wide enough to leave nothing for the video.
+    await dragBy('#splitRail', -5000);
+    await wait(150);
+    const capped = await js(`(() => ({
+      rail: document.querySelector('#rail').getBoundingClientRect().width,
+      win: window.innerWidth,
+    }))()`);
+    expect(capped.rail <= capped.win - 500,
+      `the rail took the whole window (${Math.round(capped.rail)} of ${capped.win})`);
+
+    // Double-click is the way back out of a layout you have dragged into a mess.
+    await js(`document.querySelector('#splitRail').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await wait(150);
+    const afterReset = await js(`(() => ({
+      inline: document.querySelector('#rail').style.width || '',
+      key: localStorage.getItem('cutright.layout.rail'),
+    }))()`);
+    expect(afterReset.inline === '', 'reset left an inline width behind: ' + afterReset.inline);
+    expect(afterReset.key === null, 'reset did not forget the stored size');
+
+    // And the keyboard works, so this is not mouse-only.
+    await js(`(() => { const h = document.querySelector('#splitRail'); h.focus();
+      h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); })()`);
+    await wait(120);
+    const byKey = await width();
+    expect(byKey > start + 4, `arrow keys did not resize: ${start} → ${byKey}`);
+
+    await js(`(() => { window.Panels.resetAll(); })()`);
+    await wait(100);
+    return { start: Math.round(start), wider: Math.round(wider), capped: Math.round(capped.rail) };
+  });
+
   await test('captions: several can be selected together and moved with the keyboard', async () => {
     const cues = disk().captions?.cues || [];
     if (cues.length < 3) return { skipped: 'not enough cues in this project' };

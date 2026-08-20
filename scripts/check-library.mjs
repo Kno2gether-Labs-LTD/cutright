@@ -51,6 +51,15 @@ ok('the project the user last opened stays first', items[0]?.dir === imported,
 ok('a recording is labelled as one', by(takeA)?.origin === 'recording');
 ok('an imported video is not', by(imported)?.origin === 'import');
 ok('it carries who made it', by(takeA)?.createdBy === 'Cutright 0.1.0');
+// The row shows the date separately, so repeating the stamp in the name just costs characters.
+ok('the timestamp prefix is dropped from a recording name', by(takeA)?.name === 'Demo',
+   'got ' + JSON.stringify(by(takeA)?.name));
+ok('a folder that is ONLY a timestamp keeps it, rather than showing nothing',
+   (() => { const d = make(join(recordings, '2026-08-02 1200'), { meta: {}, recording: { duration: 4 } });
+            return listLibrary({ recordingsDir: recordings }).find((i) => i.dir === d)?.name === '2026-08-02 1200'; })());
+ok('an explicit title always wins',
+   (() => { const d = make(join(recordings, '2026-08-03 1200 Raw'), { meta: { title: 'The good take' } });
+            return listLibrary({ recordingsDir: recordings }).find((i) => i.dir === d)?.name === 'The good take'; })());
 ok('the length shown is the video, not how long the session ran',
    by(takeA)?.duration === 95, 'got ' + by(takeA)?.duration + ' (185 is the wall clock)');
 ok('falling back to the session length when there is no video length',

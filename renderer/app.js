@@ -1283,6 +1283,11 @@ async function showHome() {
       : 'Missing: ' + env.missing.map((m) => m.tool).join(', ');
   };
   $('#homeLogs').onclick = (ev) => { ev.preventDefault(); E.openLogs(); };
+  $('#homeResetLayout').onclick = (ev) => {
+    ev.preventDefault();
+    window.Panels.resetAll();
+    setStatus('Every panel is back to its default size', 'ok');
+  };
 }
 
 function hideHome() {
@@ -2670,37 +2675,17 @@ function initKeys() {
 }
 
 // ---------------------------------------------------------------- splitters
+// The splitters are declared in the markup and driven by renderer/panels.js, which also
+// remembers where they were left. All this has to do is redraw whatever cares about the new size.
 function initSplitters() {
-  drag($('#splitTimeline'), 'y', (dy) => {
-    const p = $('#timelinePanel');
-    p.style.height = clamp(p.getBoundingClientRect().height + dy, 132, window.innerHeight - 260) + 'px';
-    renderTimeline();
-  });
-  drag($('#splitRail'), 'x', (dx) => {
-    const r = $('#rail');
-    r.style.width = clamp(r.getBoundingClientRect().width + dx, 260, window.innerWidth - 520) + 'px';
-    renderTimeline();
-  });
-  drag($('#splitTerm'), 'y', (dy) => {
-    const t = $('.term');
-    t.style.height = clamp(t.getBoundingClientRect().height + dy, 80, window.innerHeight - 220) + 'px';
-    window.dispatchEvent(new Event('resize'));
+  window.Panels.init();
+  window.addEventListener('layout:resize', (ev) => {
+    const which = ev.detail?.panel;
+    if (which === 'timeline' || which === 'rail') renderTimeline();
+    // xterm only reflows when something tells it to.
+    if (which === 'terminal' || which === 'rail') window.dispatchEvent(new Event('resize'));
   });
 }
-function drag(handle, axis, onDelta) {
-  if (!handle) return;
-  handle.addEventListener('pointerdown', (ev) => {
-    ev.preventDefault();
-    let last = axis === 'x' ? ev.clientX : ev.clientY;
-    const move = (e) => {
-      const now = axis === 'x' ? e.clientX : e.clientY;
-      onDelta(last - now); last = now;
-    };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-  });
-}
-
 // ---------------------------------------------------------------- terminal
 async function initTerminal() {
   if (!window.Terminal) { $('#terminal').textContent = 'terminal library not loaded'; return; }
@@ -2779,8 +2764,10 @@ async function renderLibrary(cfg) {
     if (it.origin === 'recording') {
       const tag = document.createElement('span');
       tag.className = 'rtag rtag-rec';
-      // The label the user asked for: these folders were made here, not imported.
-      tag.textContent = it.hasCamera ? 'Recorded in Cutright · camera' : 'Recorded in Cutright';
+      // The label the user asked for: these folders were made here, not imported. Whether a
+      // camera was rolling goes in the detail line instead — in the badge it cost seventy pixels
+      // and pushed the project's own name out of the row.
+      tag.textContent = 'Recorded in Cutright';
       meta.appendChild(tag);
     } else if (it.origin) {
       const tag = document.createElement('span');
@@ -2788,7 +2775,8 @@ async function renderLibrary(cfg) {
       tag.textContent = 'From a video';
       meta.appendChild(tag);
     }
-    const bits = [it.duration ? clock(it.duration) : '', whenText(it.createdAt)].filter(Boolean);
+    const bits = [it.hasCamera ? 'camera' : '', it.duration ? clock(it.duration) : '',
+                  whenText(it.createdAt)].filter(Boolean);
     if (bits.length) {
       const sub = document.createElement('span'); sub.className = 'rsub';
       sub.textContent = bits.join(' · ');
