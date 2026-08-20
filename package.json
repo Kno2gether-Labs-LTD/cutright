@@ -36,7 +36,8 @@
     "check:agents": "node scripts/check-agents.mjs",
     "check:preview": "node scripts/check-preview.mjs",
     "check:cutplan": "node scripts/check-cutplan.mjs",
-    "check:guard": "node scripts/check-guard.mjs"
+    "check:guard": "node scripts/check-guard.mjs",
+    "check:history": "node scripts/check-history.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

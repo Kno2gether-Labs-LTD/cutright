@@ -37,6 +37,8 @@ jobs:
         run: node scripts/check-mcp.mjs
       - name: Hand edits survive the agent
         run: node scripts/check-guard.mjs
+      - name: Edit ledger (see what changed, take back just that)
+        run: node scripts/check-history.mjs
       - name: Cut planning (a model may suggest, never edit)
         run: node scripts/check-cutplan.mjs
       - name: Preview time mapping (the app and the engine agree)

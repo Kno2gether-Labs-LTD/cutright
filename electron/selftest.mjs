@@ -1154,6 +1154,58 @@ export async function runEditTests({ win, settings, app }) {
     return { added: added.length, x: z.x, y: z.y, start: z.start };
   });
 
+  await test('history: an agent pass is recorded, and one part of it can be taken back', async () => {
+    // The promise: the agent rewrites forty things and you can take back the one you disagree
+    // with, keeping the other thirty-nine. Do exactly that.
+    const before = disk();
+    const keptCuts = before.cuts || [];
+
+    // Be the agent: write project.json from outside, changing two unrelated things.
+    const pass = JSON.parse(JSON.stringify(before));
+    pass.cuts = [...keptCuts, { id: 'hist-cut', start: at(0.30), end: at(0.36) }];
+    pass.zooms = [...(pass.zooms || []), { id: 'hist-zoom', start: at(0.6), dur: 1, scale: 1.5, x: 0.5, y: 0.5 }];
+    await writeProject(pass);
+    await settle();
+    await wait(500);                       // the watcher debounces before it records
+
+    let list = await js(`(async () => await window.editor.history.list())()`, true);
+    expect(list.entries.length >= 1, 'nothing was recorded when the project changed underneath');
+    const entry = list.entries[0];
+    expect(entry.by === 'agent', `the change was attributed to "${entry.by}", expected the agent`);
+    expect(entry.changes.length === 2, `recorded ${entry.changes.length} changes, expected 2`);
+    expect(/added/.test(entry.summary), 'the summary does not say what happened: ' + entry.summary);
+
+    // Take back ONLY the cut. The zoom must survive.
+    const cutChange = entry.changes.find((c) => c.kind === 'cuts');
+    expect(cutChange, 'the added cut was not in the entry');
+    const res = await js(`(async () => await window.editor.history.revert(
+      { id: '${entry.id}', changes: ['${cutChange.kind}:${cutChange.id}'] }))()`, true);
+    expect(res.applied === 1, `took back ${res.applied} changes, expected 1 (${JSON.stringify(res.conflicts)})`);
+
+    await settle();
+    const now = disk();
+    expect(!(now.cuts || []).some((c) => c.id === 'hist-cut'), 'the cut was not taken back');
+    expect((now.zooms || []).some((z) => z.id === 'hist-zoom'),
+      'taking back the cut also threw away the zoom the agent added');
+
+    // Taking it back is itself an edit, and is recorded as one — attributed to the person.
+    list = await js(`(async () => await window.editor.history.list())()`, true);
+    expect(list.entries[0].by === 'you', 'the revert was not recorded as the user’s own edit');
+
+    // And it refuses to undo the same thing twice rather than duplicating anything.
+    const again = await js(`(async () => await window.editor.history.revert(
+      { id: '${entry.id}', changes: ['${cutChange.kind}:${cutChange.id}'] }))()`, true);
+    expect(again.applied === 0 && (again.conflicts || []).length === 1,
+      'undoing the same change twice was not refused: ' + JSON.stringify(again));
+
+    const restore = disk();
+    restore.cuts = keptCuts;
+    restore.zooms = (restore.zooms || []).filter((z) => z.id !== 'hist-zoom');
+    await writeProject(restore);
+    await settle();
+    return { recorded: entry.changes.length, by: entry.by, tookBack: res.applied };
+  });
+
   await test('layout: panels resize, stay within reach, remember, and reset', async () => {
     // An editor is somewhere people sit for hours and everyone arranges it differently. What must
     // not happen is a drag that goes the wrong way, one that lets a panel swallow the thing next

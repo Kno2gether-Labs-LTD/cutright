@@ -375,6 +375,9 @@ function initTimelineInteraction() {
   $('#btnTranscriptEdit').onclick = () => openTranscriptEditor();
   $('#btnStartAgent').onclick = () => startAgentEdit();
   $('#btnAgentBrief').onclick = () => showAgentBrief();
+  $('#btnHistory').onclick = () => showHistory();
+  // The list is live: when the agent writes, the history grows underneath you.
+  E.history.onChanged(() => { if ($('#selBadge').textContent === 'history') showHistory(); });
   $('#btnAgentPick').onclick = () => showAgentPicker();
   refreshAgents();
 
@@ -2938,3 +2941,115 @@ function skipPastCuts(t) {
 }
 video.addEventListener('timeupdate', () => skipPastCuts());
 video.addEventListener('seeked', () => skipPastCuts());
+
+// ---------------------------------------------------------------- the edit ledger
+// The agent rewrites forty things in one pass. "Undo" as a single step would throw all forty
+// away or none of them, so this shows the pass as a list of ELEMENTS — this cut, that caption —
+// and any of them can be taken back on its own. Reverting applies the inverse to the project as
+// it is NOW, so work done afterwards survives.
+let history = { entries: [], open: null, picked: new Set() };
+
+async function showHistory() {
+  const r = await E.history.list();
+  history.entries = r?.entries || [];
+  renderHistoryPanel();
+}
+
+function renderHistoryPanel() {
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'history';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'history';
+  const when = document.createElement('span');
+  when.textContent = history.entries.length ? `${history.entries.length} changes` : 'nothing yet';
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  if (!history.entries.length) {
+    box.appendChild(hint('Every change to this project is recorded here — yours and the agent’s — '
+      + 'with a way to take any of it back. Nothing has changed since you opened it.'));
+    return;
+  }
+
+  const wrap = document.createElement('div'); wrap.className = 'autocut';
+  const list = document.createElement('div'); list.className = 'ac-list';
+
+  history.entries.forEach((e) => {
+    const open = history.open === e.id;
+    const row = document.createElement('div');
+    row.className = 'hist-entry' + (open ? ' open' : '');
+
+    const head = document.createElement('button'); head.className = 'hist-head';
+    const who = document.createElement('span');
+    who.className = 'hist-by ' + (e.by === 'agent' ? 'agent' : 'you');
+    who.textContent = e.by === 'agent' ? 'agent' : 'you';
+    const sum = document.createElement('span'); sum.className = 'hist-sum'; sum.textContent = e.summary;
+    const ago = document.createElement('span'); ago.className = 'hist-when'; ago.textContent = shortWhen(e.at);
+    head.append(who, sum, ago);
+    head.onclick = () => { history.open = open ? null : e.id; history.picked = new Set(); renderHistoryPanel(); };
+    row.appendChild(head);
+
+    if (open) {
+      const items = document.createElement('div'); items.className = 'hist-items';
+      e.changes.forEach((c) => {
+        const key = `${c.kind}:${c.id}`;
+        const it = document.createElement('div'); it.className = 'ac-item';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = history.picked.has(key);
+        cb.onclick = (ev) => { ev.stopPropagation();
+          if (cb.checked) history.picked.add(key); else history.picked.delete(key);
+          const b = $('#histRevert');
+          if (b) b.textContent = history.picked.size ? `Take back ${history.picked.size}` : 'Take back all of it';
+        };
+        const op = document.createElement('span'); op.className = 'rsn ' + c.op; op.textContent = c.op;
+        const lbl = document.createElement('span'); lbl.className = 'lbl';
+        lbl.textContent = `${c.what}${c.fields?.length ? ' — ' + c.fields.join(', ') : ''}`;
+        it.append(cb, op, lbl);
+        // Clicking the row takes you to the moment it happened at, so "what is this?" is one click.
+        it.onclick = () => seekTimeline(c.at || 0);
+        it.title = `${c.op} ${c.kind.replace(/s$/, '')} · click to jump there`;
+        items.appendChild(it);
+      });
+      row.appendChild(items);
+
+      const actions = document.createElement('div'); actions.className = 'btnrow';
+      const revert = btn('Take back all of it', async () => {
+        const picks = [...history.picked];
+        const res = await E.history.revert({ id: e.id, changes: picks });
+        if (res?.error) return setStatus('Could not take that back: ' + res.error, 'error');
+        if (!res.applied) {
+          setStatus(res.conflicts?.[0]?.why ? `Nothing taken back — ${res.conflicts[0].why}` : 'Nothing to take back', 'error');
+        } else {
+          const extra = res.conflicts?.length ? `, ${res.conflicts.length} could not be` : '';
+          setStatus(`Took back ${res.applied} change${res.applied === 1 ? '' : 's'}${extra}`, 'ok');
+        }
+        await reloadIfChanged(true);
+        renderTimeline();
+        showHistory();
+      }, 'primary');
+      revert.id = 'histRevert';
+      actions.append(revert, btn('Select none', () => { history.picked = new Set(); renderHistoryPanel(); }));
+      row.appendChild(actions);
+      if (e.by === 'agent') {
+        row.appendChild(hint('Tick individual changes to keep the rest of the agent’s pass. '
+          + 'Anything somebody has edited since is left alone and reported rather than overwritten.'));
+      }
+    }
+    list.appendChild(row);
+  });
+
+  wrap.appendChild(list);
+  box.appendChild(wrap);
+}
+
+function shortWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}

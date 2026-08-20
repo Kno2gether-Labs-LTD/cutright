@@ -20,6 +20,7 @@ import { listAgents, byId as agentById, launchCommand, kickoffPrompt, resolveBin
 import { segmentsFrom, chunk as chunkTranscript, promptFor, parsePlan, merge as mergeCuts, SYSTEM as CUT_SYSTEM } from './cutplan.mjs';
 import * as llm from './llm.mjs';
 import { snapshot as guardSnapshot, diff as guardDiff, restore as guardRestore } from './guard.mjs';
+import { diff as historyDiff, invert as historyInvert, apply as historyApply } from './history.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -136,6 +137,9 @@ function refreshAgentBrief() {
 function setWorkspace(dir, { fromUser = true } = {}) {
   if (fromUser) openEditorNext = true;
   settings.work = dir;
+  // A new project means a new baseline; comparing against the last one would record the whole of
+  // this project as a change somebody made.
+  lastSeenProject = null;
   settings.recent = [dir, ...settings.recent.filter((r) => r !== dir)].filter((r) => existsSync(r)).slice(0, 8);
   saveSettings(); watchProject();
   refreshAgentBrief();
@@ -288,7 +292,12 @@ function watchProject() {
       if (name !== 'project.json') return;
       clearTimeout(watchTimer);
       // debounce: the agent/CLI writes are not atomic
-      watchTimer = setTimeout(() => win && !win.isDestroyed() && win.webContents.send('project:changed'), 250);
+      watchTimer = setTimeout(() => {
+        // Whoever wrote it, the change gets recorded. If it was our own save the entry is
+        // already in, and this finds nothing to add.
+        try { recordEdit('agent'); } catch {}
+        if (win && !win.isDestroyed()) win.webContents.send('project:changed');
+      }, 250);
     });
   } catch (e) { console.warn('[watch] failed:', e.message); }
 }
@@ -1082,6 +1091,87 @@ function killTerm(id) {
 }
 
 // ---------------------------------------------------------------- ipc
+// ---------------------------------------------------------------- the edit ledger
+// Every change to project.json becomes an entry: what moved, and who moved it. Both halves come
+// from the same place — we compare the file against the last version we saw — so an edit made in
+// the app and an edit made by the agent are recorded identically. The only difference is the
+// name on it, and that is decided by whether we were the ones who just wrote.
+const HISTORY_MAX = 300;
+const historyFile = () => join(settings.work, '.cutright', 'history.json');
+let lastSeenProject = null;
+
+function readHistory() {
+  try { const h = JSON.parse(readFileSync(historyFile(), 'utf8')); return Array.isArray(h) ? h : []; }
+  catch { return []; }
+}
+function writeHistory(list) {
+  try {
+    mkdirSync(dirname(historyFile()), { recursive: true });
+    writeFileSync(historyFile(), JSON.stringify(list.slice(-HISTORY_MAX), null, 1));
+  } catch (e) { log('history', e.message); }
+}
+function currentProject() {
+  try { return JSON.parse(readFileSync(projectPath(), 'utf8')); } catch { return null; }
+}
+
+// Called after anything writes project.json. The first call after opening a project only takes a
+// baseline: there is nothing to compare against yet, and inventing an entry for "the project
+// exists" would put noise at the top of every history.
+function recordEdit(by) {
+  if (!settings.work) return null;
+  const cur = currentProject();
+  if (!cur) return null;
+  if (!lastSeenProject) { lastSeenProject = cur; return null; }
+  let d;
+  try { d = historyDiff(lastSeenProject, cur); } catch (e) { log('history diff', e.message); lastSeenProject = cur; return null; }
+  lastSeenProject = cur;
+  if (!d.changes.length) return null;
+  const entry = { id: 'h' + Date.now().toString(36) + Math.floor(Math.random() * 1e3).toString(36),
+                  at: new Date().toISOString(), by, summary: d.summary, changes: d.changes };
+  const list = readHistory();
+  list.push(entry);
+  writeHistory(list);
+  try { win?.webContents.send('history:changed'); } catch {}
+  return entry;
+}
+
+function registerHistoryIpc() {
+  ipcMain.handle('history:list', () => {
+    if (!settings.work) return { entries: [] };
+    // Newest first, and without the full before/after payloads — the list only needs to say what
+    // happened; the detail is fetched when a row is opened.
+    return { entries: readHistory().slice().reverse().map((e) => ({
+      id: e.id, at: e.at, by: e.by, summary: e.summary, count: e.changes.length,
+      changes: e.changes.map((c) => ({ kind: c.kind, id: c.id, op: c.op, at: c.at,
+                                       what: c.what, fields: c.fields || [] })),
+    })) };
+  });
+
+  ipcMain.handle('history:revert', (_e, o = {}) => {
+    if (!settings.work) return { error: 'no workspace open' };
+    const entry = readHistory().find((x) => x.id === o.id);
+    if (!entry) return { error: 'that entry is not in the history any more' };
+    // Either the whole entry, or the specific changes the user ticked.
+    const wanted = Array.isArray(o.changes) && o.changes.length
+      ? entry.changes.filter((c) => o.changes.includes(`${c.kind}:${c.id}`))
+      : entry.changes;
+    if (!wanted.length) return { error: 'nothing selected to take back' };
+    const project = currentProject();
+    if (!project) return { error: 'could not read project.json' };
+    let out;
+    try { out = historyApply(project, wanted.map(historyInvert), { force: !!o.force }); }
+    catch (e) { return { error: e.message }; }
+    if (!out.applied.length) {
+      return { ok: true, applied: 0, conflicts: out.conflicts.map((c) => ({ what: c.change.what, why: c.why })) };
+    }
+    writeFileSync(projectPath(), JSON.stringify(project, null, 2));
+    // Reverting is itself an edit, and shows up in the history as one.
+    recordEdit('you');
+    return { ok: true, applied: out.applied.length,
+             conflicts: out.conflicts.map((c) => ({ what: c.change.what, why: c.why })) };
+  });
+}
+
 function registerIpc() {
   ipcMain.handle('config:get', () => ({
     work: settings.work, project: settings.work ? projectPath() : '', engine: settings.engine,
@@ -1253,8 +1343,11 @@ function registerIpc() {
   ipcMain.handle('project:save', (_e, data) => {
     if (!settings.work) return { ok: false, error: 'no workspace open' };
     if (!data || typeof data !== 'object' || !data.meta) return { ok: false, error: 'refusing to save a malformed project' };
-    try { writeFileSync(projectPath(), JSON.stringify(data, null, 2)); return { ok: true }; }
-    catch (e) { return { ok: false, error: e.message }; }
+    try {
+      writeFileSync(projectPath(), JSON.stringify(data, null, 2));
+      recordEdit('you');
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('env:check', () => checkEnvironment());
@@ -1429,6 +1522,7 @@ app.whenReady().then(async () => {
   registerMediaProtocol();
   registerIpc();
   registerRecordingIpc();
+  registerHistoryIpc();
   Menu.setApplicationMenu(buildMenu());
   createWindow();
   watchProject();
