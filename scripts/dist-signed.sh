@@ -11,6 +11,12 @@ if [ -z "$ID" ]; then
   exit 1
 fi
 echo "Signing as: $ID"
+# electron-builder matches on the common name and rejects the "Developer ID Application:" prefix,
+# choosing the right certificate itself. Exporting CSC_NAME as well tells the afterPack hook to
+# stand down — otherwise it ad-hoc signs the bundle first and electron-builder immediately
+# replaces that signature, which is wasted work and confusing in the log.
+SHORT=${ID#Developer ID Application: }
+export CSC_NAME="$SHORT"
 
 if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
   echo "⚠️  Notarization variables are not set — the app will be SIGNED but NOT notarized."
@@ -19,7 +25,7 @@ if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "
 fi
 
 npx electron-builder --mac dmg --arm64 \
-  -c.mac.identity="$ID" \
+  -c.mac.identity="$SHORT" \
   -c.mac.hardenedRuntime=true \
   -c.mac.gatekeeperAssess=false
 

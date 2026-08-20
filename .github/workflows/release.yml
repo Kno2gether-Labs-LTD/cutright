@@ -64,7 +64,7 @@ jobs:
         run: |
           npm run vendor
           npx electron-builder --mac dmg --arm64 \
-            -c.mac.identity="${SIGN_IDENTITY:-Developer ID Application}" \
+            -c.mac.identity="${SIGN_IDENTITY#Developer ID Application: }" \
             -c.mac.hardenedRuntime=true \
             -c.mac.gatekeeperAssess=false
 
