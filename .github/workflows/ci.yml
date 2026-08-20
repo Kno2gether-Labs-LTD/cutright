@@ -64,10 +64,14 @@ jobs:
       - run: npm ci
       - name: Rebuild native modules for Electron
         run: npm run rebuild
-      - name: Install ffmpeg + Pillow
+      - name: Install ffmpeg + Pillow + numpy
         run: |
           brew install ffmpeg
-          python3 -m pip install --break-system-packages --user Pillow || python3 -m pip install --user Pillow
+          # Pillow draws the captions and panels; numpy is what check-framing.mjs measures the
+          # rendered geometry with, and without it that check fails on an import rather than on
+          # anything to do with the app.
+          python3 -m pip install --break-system-packages --user Pillow numpy \
+            || python3 -m pip install --user Pillow numpy
       - name: Build a synthetic test project
         run: node scripts/make-test-workspace.mjs /tmp/cutright-test-ws
       - name: Run the suite (core tags — no network, no model downloads)
