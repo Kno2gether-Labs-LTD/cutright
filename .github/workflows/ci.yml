@@ -84,6 +84,8 @@ jobs:
         run: node scripts/check-zoom-geometry.mjs
       - name: Framing geometry (the picture moves and changes shape as written)
         run: node scripts/check-framing.mjs
+      - name: Clips (the second video track lands where the project says)
+        run: node scripts/check-clips.mjs
       - name: Pacing (panels follow the speech, the reading and the pack)
         run: node scripts/check-pacing.mjs
       - name: Verifier (it catches what a render would silently drop)

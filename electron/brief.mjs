@@ -136,6 +136,21 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       // Generation is listed, never performed, here. Anything added later — an MCP server,
       // an image or video generation API — appends an entry in this shape: what it makes,
       // whether it is configured, and the exact way to call it.
+      // The second video track. A project used to hold exactly one video, so a tutorial —
+      // talking head plus screen capture — could only be decorated, not edited.
+      clips: {
+        where: 'project.json → clips[]',
+        shape: '{ id, src, start, dur, in, fit:"full"|"box", box:{x,y,w,h}, fill:"contain"|"cover", mute }',
+        times: 'start and dur are on the ORIGINAL timeline like everything else; `in` is where to '
+             + 'begin inside the CLIP\'s own clock',
+        geometry: 'box values are fractions of the frame, 0..1 — never pixels, so the edit '
+                + 'survives a change of resolution. Same rule as zoom centres.',
+        fill: '"contain" letterboxes and never crops — the right choice for a screen recording, '
+            + 'because cropping throws away the part the user is pointing at. "cover" fills.',
+        careful: 'a clip that straddles a cut is DROPPED at render, exactly like a scene or an '
+               + 'overlay. Place it clear of cuts and run the verifier.',
+      },
+
       mediaGeneration: {
         audio: {
           provider: 'elevenlabs',

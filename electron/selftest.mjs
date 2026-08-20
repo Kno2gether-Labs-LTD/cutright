@@ -1220,6 +1220,58 @@ export async function runEditTests({ win, settings, app }) {
     return { start: Math.round(start), wider: Math.round(wider), capped: Math.round(capped.rail) };
   });
 
+  await test('clips: a second video track round-trips and the check guards it', async () => {
+    // The structural gap this closes: a project used to hold exactly one video, so a tutorial —
+    // talking head plus screen capture — could only be decorated, not edited.
+    const before = disk();
+    const p = JSON.parse(JSON.stringify(before));
+    p.clips = [{ id: 'sel-clip', src: 'graded_master.mp4', start: at(0.2), dur: 2,
+                 in: 0.5, fit: 'box', box: { x: 0.6, y: 0.08, w: 0.3, h: 0.3 }, mute: true }];
+    await writeProject(p);
+    await settle();
+
+    const lane = await js(`document.querySelectorAll('#laneClips .clip').length`);
+    expect(lane === 1, `the clips lane shows ${lane} clips, expected 1`);
+
+    await js(`(() => document.querySelector('#laneClips .clip').click())()`);
+    await wait(250);
+    const badge = await js(`document.querySelector('#selBadge').textContent`);
+    expect(/clip/.test(badge), `selecting a clip showed "${badge}"`);
+
+    // The box is fractions of the frame, not pixels — the thing that lets the edit survive a
+    // change of resolution.
+    // Match on the word alone: the label carries an en-dash, and putting that inside an injected
+    // regex is a good way to spend ten minutes on the wrong bug.
+    const typed = await js(`(() => {
+      const f = [...document.querySelectorAll('#inspector .field')]
+        .find(x => (x.textContent || '').indexOf('Width') === 0);
+      if (!f) return 'no width field';
+      const i = f.querySelector('input');
+      i.value = '0.5';
+      // field() wires oninput, not onchange.
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'ok';
+    })()`);
+    expect(typed === 'ok', 'could not find the box width field: ' + typed);
+    await settle();
+    expect(Math.abs((disk().clips[0].box.w) - 0.5) < 0.001,
+      'editing the box width did not reach disk: ' + JSON.stringify(disk().clips[0].box));
+
+    // A clip that straddles a cut is dropped at render, so the check has to say so first.
+    const withCut = disk();
+    withCut.cuts = [...(withCut.cuts || []), { start: at(0.24), end: at(0.28) }];
+    await writeProject(withCut);
+    await settle();
+    const v = await js(`(async () => await window.editor.verify())()`, true);
+    expect((v.issues || []).some((i) => /clip straddles a cut/.test(i.what)),
+      'the check said nothing about a clip straddling a cut: '
+      + JSON.stringify((v.issues || []).map((i) => i.what)));
+
+    await writeProject(before);
+    await settle();
+    return { lane, badge };
+  });
+
   await test('captions: several can be selected together and moved with the keyboard', async () => {
     const cues = disk().captions?.cues || [];
     if (cues.length < 3) return { skipped: 'not enough cues in this project' };

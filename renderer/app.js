@@ -270,6 +270,14 @@ function renderTimeline() {
          + (f.to === 'full' ? '' : ` · ${Math.round((f.size || 0.26) * 100)}% of the width`),
   })), 'frame');
 
+  // clips — the second video track: b-roll, a screen recording, a cutaway
+  fillLane('#laneClips', (project.clips || []).map((c, i) => ({
+    i, start: c.start, dur: Math.max(0.2, c.dur || 2), cls: 'clip vclip', minW: 60,
+    label: (c.src || '').split('/').pop() || 'no file',
+    title: `${c.src || 'no file'} · ${c.fit === 'box' ? 'in a box' : 'full frame'}`
+         + ` · ${fmt(c.start)} → ${fmt((c.start || 0) + (c.dur || 0))}`,
+  })), 'clip');
+
   // zooms — a push-in is a scale plus a centre, so show both at a glance
   fillLane('#laneZooms', (project.zooms || []).map((z, i) => ({
     i, start: z.start, dur: Math.max(0.2, z.dur || 1), cls: 'clip zoom', minW: 44,
@@ -520,6 +528,7 @@ function nudgeCaptions({ dy = 0, dsize = 0 }) {
 function elemOf(s) {
   if (!s || !project) return null;
   if (s.kind === 'scene') return project.scenes?.[s.index];
+  if (s.kind === 'clip') return project.clips?.[s.index];
   if (s.kind === 'caption') return project.captions?.cues?.[s.index];
   if (s.kind === 'music') return project.audio?.music?.[s.index];
   if (s.kind === 'sfx') return project.audio?.sfx?.[s.index];
@@ -597,6 +606,7 @@ function renderInspector() {
   h.append(title, btn('Delete', remove, 'danger'));
   box.appendChild(h);
 
+  if (sel.kind === 'clip') return renderClipInspector(box, e);
   if (sel.kind === 'caption') renderCaptionInspector(box, e);
   else if (sel.kind === 'scene') renderSceneInspector(box, e);
   else if (sel.kind === 'cut') renderCutInspector(box, e);
@@ -1080,6 +1090,7 @@ function applyZoomSuggestions() {
 function remove() {
   if (!sel) return;
   if (sel.kind === 'scene') project.scenes.splice(sel.index, 1);
+  else if (sel.kind === 'clip') project.clips.splice(sel.index, 1);
   else if (sel.kind === 'caption') project.captions.cues.splice(sel.index, 1);
   else if (sel.kind === 'cut') project.cuts.splice(sel.index, 1);
   else if (sel.kind === 'overlay') project.overlays.splice(sel.index, 1);
@@ -1119,6 +1130,7 @@ document.addEventListener('click', (ev) => {
     if (k === 'cut') return addCut();
     if (k === 'zoom') return addZoom();
     if (k === 'frame') return addFrame();
+    if (k === 'clip') return addClip();
     project.audio = project.audio || { music: [], sfx: [] };
     project.audio[k] = project.audio[k] || [];
     project.audio[k].push({
@@ -2938,3 +2950,83 @@ function skipPastCuts(t) {
 }
 video.addEventListener('timeupdate', () => skipPastCuts());
 video.addEventListener('seeked', () => skipPastCuts());
+
+// ---------------------------------------------------------------- clips (the second video track)
+// A project used to hold exactly one video, so a tutorial — talking head plus screen capture —
+// could only be decorated, not edited. A clip is another piece of footage on the timeline: either
+// filling the frame for its window, or sitting in a box over it.
+async function addClip() {
+  const r = await E.pickClip();
+  if (!r?.path) return;
+  project.clips = project.clips || [];
+  project.clips.push({
+    manual: true, id: 'cl' + Date.now(), src: r.path,
+    start: +(timelineNow() || 0).toFixed(2),
+    dur: Math.min(r.duration || 4, 8) || 4,
+    in: 0, fit: 'full', fill: 'contain', mute: true,
+  });
+  project.clips.sort((a, b) => (a.start || 0) - (b.start || 0));
+  save(); renderTimeline();
+  select('clip', project.clips.findIndex((c) => c.id && String(c.id).startsWith('cl')
+    && Math.abs((c.start || 0) - +(timelineNow() || 0).toFixed(2)) < 0.5));
+}
+
+function renderClipInspector(box, e) {
+  box.appendChild(sechead('Clip'));
+  box.appendChild(hint((e.src || 'no file') + ' — the file stays where it is; the project points at it.'));
+
+  box.appendChild(rowOf([
+    field('Starts at', e.start ?? 0, (v) => { e.start = +v; save(); renderTimeline(); }, 'number'),
+    field('Length (s)', e.dur ?? 4, (v) => { e.dur = +v; save(); renderTimeline(); }, 'number'),
+  ]));
+  box.appendChild(rowOf([
+    field('From (s into the clip)', e.in ?? 0, (v) => { e.in = Math.max(0, +v); save(); }, 'number'),
+  ]));
+  box.appendChild(hint('“From” is which part of the source you want — the clip’s own clock, not the timeline’s.'));
+
+  box.appendChild(sep());
+  box.appendChild(sechead('Where it sits'));
+  const fitRow = document.createElement('div'); fitRow.className = 'btnrow';
+  const setFit = (v) => { e.fit = v; if (v === 'box') e.box = e.box || { x: 0.6, y: 0.06, w: 0.36, h: 0.36 };
+    save(); renderInspector(); renderTimeline(); };
+  fitRow.append(
+    btn((e.fit !== 'box' ? '✓ ' : '') + 'full frame', () => setFit('full')),
+    btn((e.fit === 'box' ? '✓ ' : '') + 'in a box', () => setFit('box')),
+  );
+  box.appendChild(fitRow);
+
+  if (e.fit === 'box') {
+    const b = e.box = e.box || { x: 0.6, y: 0.06, w: 0.36, h: 0.36 };
+    const set = (k) => (v) => { b[k] = clamp(+v, 0, 1); save(); renderTimeline(); };
+    box.appendChild(rowOf([
+      field('X (0–1)', b.x ?? 0.6, set('x'), 'number'),
+      field('Y (0–1)', b.y ?? 0.06, set('y'), 'number'),
+    ]));
+    box.appendChild(rowOf([
+      field('Width (0–1)', b.w ?? 0.36, set('w'), 'number'),
+      field('Height (0–1)', b.h ?? 0.36, set('h'), 'number'),
+    ]));
+    box.appendChild(hint('Fractions of the frame, not pixels — so the edit survives a change of resolution.'));
+  }
+
+  const fillRow = document.createElement('div'); fillRow.className = 'btnrow';
+  fillRow.append(
+    btn((e.fill !== 'cover' ? '✓ ' : '') + 'fit inside (letterbox)', () => { e.fill = 'contain'; save(); renderInspector(); }),
+    btn((e.fill === 'cover' ? '✓ ' : '') + 'fill (crop)', () => { e.fill = 'cover'; save(); renderInspector(); }),
+  );
+  box.appendChild(fillRow);
+  box.appendChild(hint(e.fill === 'cover'
+    ? 'Fills the space and crops whatever does not fit. Fine for scenery, bad for a screen recording — it will cut off the part you are pointing at.'
+    : 'Never crops. The right choice for a screen recording; you may see bars if the shapes differ.'));
+
+  box.appendChild(sep());
+  box.appendChild(btnRow(
+    btn(e.mute === false ? '✓ its sound is playing' : '✗ its sound is muted', () => {
+      e.mute = e.mute === false; save(); renderInspector();
+    }),
+    btn('Preview here', () => previewAround(e.start || 0, e.dur || 4)),
+    btn('Delete', () => remove()),
+  ));
+  box.appendChild(hint('A clip that straddles a cut is dropped at render time rather than landing '
+    + 'somewhere it was never meant to be — the check will tell you before you export.'));
+}

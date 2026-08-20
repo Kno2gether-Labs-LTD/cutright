@@ -73,6 +73,8 @@
         <div class="tl-heads" id="tlHeads">
           <div class="thead ruler-head"></div>
           <div class="thead" data-track="scenes"><span>Scenes</span></div>
+          <div class="thead" data-track="clips"><span>Clips</span>
+            <button class="mini" data-add="clip" title="Place another video on the timeline — b-roll, a screen recording, a cutaway">+</button></div>
           <div class="thead" data-track="overlays"><span>Overlays</span>
             <button class="mini" data-add="overlay" title="Add an overlay clip (HyperFrames / alpha video)">+</button></div>
           <div class="thead" data-track="captions"><span>Captions</span>
@@ -94,6 +96,7 @@
           <div class="tl-inner" id="tlInner">
             <div class="ruler" id="ruler"></div>
             <div class="lane" id="laneScenes" data-lane="scenes"></div>
+            <div class="lane" id="laneClips" data-lane="clips"></div>
             <div class="lane" id="laneOverlays" data-lane="overlays"></div>
             <div class="lane" id="laneCaps" data-lane="captions"></div>
             <div class="lane" id="laneCuts" data-lane="cuts"></div>

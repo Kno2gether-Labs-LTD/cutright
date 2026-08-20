@@ -1342,6 +1342,29 @@ function registerIpc() {
   });
 
   // Pick an overlay clip (HyperFrames MOV/WebM with alpha, or a PNG sequence's first frame).
+  // A clip is ordinary footage — b-roll, a screen recording, a cutaway — not an alpha overlay,
+  // so it gets its own picker with its own default folder and filters.
+  ipcMain.handle('clip:pick', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose a clip to place on the timeline',
+      defaultPath: settings.work || undefined,
+      properties: ['openFile'],
+      filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv'] }],
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false };
+    const p = r.filePaths[0];
+    const rel = settings.work && p.startsWith(resolve(settings.work) + sep)
+      ? p.slice(resolve(settings.work).length + 1) : p;
+    let duration = 0;
+    try {
+      const { spawnSync } = await import('node:child_process');
+      const out = spawnSync('ffprobe',
+        ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', p], { encoding: 'utf8' });
+      duration = Math.round((parseFloat(out.stdout) || 0) * 100) / 100;
+    } catch {}
+    return { ok: true, path: rel, duration };
+  });
+
   ipcMain.handle('overlay:pick', async () => {
     const r = await dialog.showOpenDialog(win, {
       title: 'Choose an overlay clip',

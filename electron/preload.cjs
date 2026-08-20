@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('editor', {
   revealInFolder: (name) => ipcRenderer.invoke('shell:showItem', str(name)),
   checkEnvironment: () => ipcRenderer.invoke('env:check'),
   pickOverlay: () => ipcRenderer.invoke('overlay:pick'),
+  pickClip: () => ipcRenderer.invoke('clip:pick'),
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
     apply: (id) => ipcRenderer.invoke('templates:apply', str(id)),

@@ -58,6 +58,33 @@ def check(P, root="."):
         if src and not os.path.exists(os.path.join(root, src)):
             bad("error", "an overlay file is missing", src, "render the preset again, or fix the path")
 
+    # ---- clips (the second video track)
+    for cl in P.get("clips") or []:
+        if cl.get("enabled") is False: continue
+        cid = cl.get("id") or "(no id)"
+        s0 = float(cl.get("start", 0)); d0 = float(cl.get("dur", 0) or 0)
+        if straddles(s0, s0 + d0):
+            bad("error", "a clip straddles a cut and will be dropped at render",
+                f"{cid} at {s0}s", "move it clear of the cut, or remove the cut")
+        src = cl.get("src")
+        if not src:
+            bad("error", "a clip has no file", cid, "point it at a video in the project folder")
+        elif not os.path.isabs(src) and not os.path.exists(os.path.join(root, src)):
+            bad("error", "a clip's file is missing", src, "put the file back, or fix the path")
+        if d0 <= 0:
+            bad("error", "a clip has no length", f"{cid} at {s0}s", "give it a dur in seconds")
+        if str(cl.get("fit")) == "box":
+            b = cl.get("box") or {}
+            for k, dflt in (("x", 0.6), ("y", 0.06), ("w", 0.36), ("h", 0.36)):
+                v = float(b.get(k, dflt))
+                if not 0 <= v <= 1:
+                    bad("error", "a clip's box is outside the frame",
+                        f"{cid}: {k}={v}", "box values are fractions of the frame, 0..1 — not pixels")
+            if float(b.get("x", 0.6)) + float(b.get("w", 0.36)) > 1.001 or \
+               float(b.get("y", 0.06)) + float(b.get("h", 0.36)) > 1.001:
+                bad("warn", "a clip's box runs off the edge of the frame",
+                    cid, "x+w and y+h should be at most 1")
+
     # ---- panels
     pacing = P.get("pacing") or {}
     lo, hi = float(pacing.get("minPanel", 2.0)), float(pacing.get("maxPanel", 9.0))
