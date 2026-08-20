@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cutright recording</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="overlay.css">
+
+<!-- Two things live in one transparent window: the count-in, which fills the screen and lets
+     clicks through, and the controls, which are a small pill you can drag anywhere. -->
+<div id="count" class="count" hidden><span id="countNum">3</span></div>
+
+<div id="controls" class="pill" hidden>
+  <button id="btnStop" class="pbtn stop" title="Finish the recording">
+    <span class="sq"></span></button>
+  <button id="btnPause" class="pbtn" title="Pause (the clock stops too)">
+    <span class="bars"></span></button>
+  <div class="time" id="time">0:00</div>
+  <button id="btnMark" class="pbtn small" title="Mark this moment — it becomes a marker on the timeline">★</button>
+  <div class="grip" title="Drag to move"></div>
+</div>
+
+<script src="overlay.js"></script>

@@ -12,7 +12,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // strip ANSI/OSC so we can assert on terminal text
 const strip = (t) => String(t).replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
 
-export async function run({ win, app, settings, logToApp = () => {} }) {
+export async function run({ win, app, settings, logToApp = () => {}, overlay = null }) {
   const want = String(process.env.CVE_SMOKE).split(',').map((s) => s.trim());
   const out = process.env.CVE_SMOKE_OUT || '/tmp/cve-smoke';
   try { mkdirSync(dirname(out), { recursive: true }); } catch {}
@@ -242,6 +242,37 @@ export async function run({ win, app, settings, logToApp = () => {} }) {
         check('previewPlayback', await win.webContents.executeJavaScript(
           `(() => { const v=document.querySelector('#video'); return { duration: +(v.duration||0).toFixed(2), readyState: v.readyState, error: v.error?.code||null }; })()`));
       }
+    }
+
+    // CVE_SMOKE_OVERLAY=1 photographs the recording overlay in both of its states. It is a
+    // transparent, always-on-top window, so the only way to see what it draws is to ask it.
+    if (process.env.CVE_SMOKE_OVERLAY && overlay) {
+      for (const [mode, extra] of [['count', { n: 3 }], ['controls', {}]]) {
+        overlay.show(mode, extra);
+        if (mode === 'controls') overlay.state({ elapsed: 87, paused: false });
+        await wait(900);
+        const w = overlay.win();
+        if (w && !w.isDestroyed()) {
+          try {
+            const img = await w.webContents.capturePage();
+            writeFileSync(`${out}-overlay-${mode}.png`, img.toPNG());
+            const b = w.getBounds();
+            const { screen } = await import('electron');
+            const screenSize = screen.getPrimaryDisplay().bounds;
+            // What has to be true, not just what it looks like: the count-in covers the screen
+            // and lets clicks through; the controls are small and can be clicked.
+            const expected = mode === 'count'
+              ? b.width >= screenSize.width - 4 && b.height >= screenSize.height - 60
+              : b.width < 200 && b.height < 320;
+            const drew = (await w.webContents.executeJavaScript(
+              `!document.querySelector('${mode === 'count' ? '#count' : '#controls'}').hidden`));
+            check(`overlay:${mode}`, { shot: `${out}-overlay-${mode}.png`, size: b,
+                                       sizeIsRight: expected, showing: drew,
+                                       ok: expected && drew });
+          } catch (e) { check(`overlay:${mode}`, { error: e.message }); }
+        } else check(`overlay:${mode}`, { error: 'the overlay window did not open' });
+      }
+      overlay.close();
     }
 
     // CVE_SMOKE_PANEL=transcript|templates|autocut|look opens a panel before the screenshot

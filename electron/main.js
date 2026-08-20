@@ -427,20 +427,85 @@ function openRecorder() {
   return recWin;
 }
 
-// While recording the window becomes a small always-on-top bar so it is out of the shot.
+// ---------------------------------------------------------------- the recording overlay
+// A count-in shown inside an opaque window is a window in the shot: it covers what you are about
+// to record and looks like an app, not like recording. So the count and the controls live in a
+// window with no frame and no background — it draws a number over your screen and gets out of
+// the way, and the controls become a small pill you can drag anywhere.
+//
+// Transparency cannot be turned on after a window exists, which is why this is a SECOND window
+// rather than the recorder resizing itself. The recorder window still owns the capture; it just
+// stops being seen.
+let overlayWin = null;
+
+function openOverlay() {
+  if (overlayWin && !overlayWin.isDestroyed()) return overlayWin;
+  const d = screen.getPrimaryDisplay().bounds;
+  overlayWin = new BrowserWindow({
+    x: d.x, y: d.y, width: d.width, height: d.height,
+    frame: false, transparent: true, hasShadow: false, resizable: false,
+    skipTaskbar: true, focusable: false, fullscreenable: false,
+    backgroundColor: '#00000000', show: false,
+    webPreferences: {
+      preload: join(__dir, 'overlay-preload.cjs'),
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  // Above everything, including full-screen apps — you are recording those.
+  overlayWin.setAlwaysOnTop(true, 'screen-saver');
+  overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlayWin.loadFile(join(ROOT, 'renderer/overlay.html'));
+  overlayWin.on('closed', () => { overlayWin = null; });
+  return overlayWin;
+}
+
+function overlayMode(mode, payload = {}) {
+  const w = openOverlay();
+  if (!w || w.isDestroyed()) return;
+  const d = screen.getPrimaryDisplay().bounds;
+  if (mode === 'count') {
+    // Full screen and click-through: the number must not intercept a click meant for the app
+    // underneath, and it must not be something you can accidentally drag.
+    w.setBounds({ x: d.x, y: d.y, width: d.width, height: d.height });
+    w.setIgnoreMouseEvents(true);
+    w.setFocusable(false);
+  } else if (mode === 'controls') {
+    // Small, draggable, and clickable. Sized to the pill, parked out of the way on the left
+    // where a dock or a taskbar usually is not.
+    w.setIgnoreMouseEvents(false);
+    w.setFocusable(true);
+    w.setBounds({ x: d.x + 24, y: d.y + Math.round(d.height * 0.32), width: 76, height: 190 });
+  }
+  const send = () => { try { w.webContents.send('overlay:mode', { mode, ...payload }); } catch {} };
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+  if (!w.isVisible()) w.showInactive();
+}
+
+function overlayState(state) {
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    try { overlayWin.webContents.send('overlay:state', state); } catch {}
+  }
+}
+
+function closeOverlay() {
+  if (overlayWin && !overlayWin.isDestroyed()) { try { overlayWin.close(); } catch {} }
+  overlayWin = null;
+}
+
+// While recording, the recorder window goes away entirely and the overlay is all you see.
 function setRecorderCompact(on) {
   if (!recWin || recWin.isDestroyed()) return;
-  const display = screen.getPrimaryDisplay().workArea;
   if (on) {
-    recWin.setAlwaysOnTop(true, 'screen-saver');
-    recWin.setResizable(false);
-    recWin.setSize(300, 52);
-    recWin.setPosition(Math.round(display.x + display.width / 2 - 150), display.y + display.height - 96);
+    overlayMode('controls');
+    recWin.hide();
     win?.minimize();
   } else {
+    closeOverlay();
     recWin.setAlwaysOnTop(false);
     recWin.setSize(460, 640);
     recWin.center();
+    recWin.show();
     win?.restore();
   }
 }
@@ -526,6 +591,23 @@ function registerRecordingIpc() {
   ipcMain.handle('rec:resume', () => { session?.resume(); return { ok: true }; });
   ipcMain.handle('rec:mark', (_e, type) => { session?.mark(type || 'mark'); return { ok: true }; });
   ipcMain.handle('rec:compact', (_e, on) => { setRecorderCompact(on); return { ok: true }; });
+
+  // The count-in: a number over the whole screen, not a window in the shot. n <= 0 clears it.
+  ipcMain.handle('rec:count', (_e, n) => {
+    const num = Number(n) || 0;
+    if (num > 0) overlayMode('count', { n: num });
+    else closeOverlay();
+    return { ok: true };
+  });
+  ipcMain.on('rec:state', (_e, st) => overlayState({
+    elapsed: Number(st?.elapsed) || 0, paused: !!st?.paused,
+  }));
+  // A button on the overlay is a button on the recorder — relayed, because the recorder window
+  // is hidden but is still the only thing that can stop a MediaRecorder.
+  ipcMain.on('overlay:action', (_e, kind) => {
+    if (!recWin || recWin.isDestroyed()) return;
+    try { recWin.webContents.send('rec:remote', String(kind || '').slice(0, 16)); } catch {}
+  });
   ipcMain.handle('rec:close', () => {
     if (recWin && !recWin.isDestroyed()) recWin.close();
     win?.restore(); win?.focus();
@@ -1584,7 +1666,10 @@ app.whenReady().then(async () => {
     if (argOut) process.env.CVE_SMOKE_OUT = argOut.split('=')[1];
   }
   if (process.env.CVE_E2E) (await import(process.env.CVE_E2E)).run({ win, app, settings, logToApp: (l) => log(l) });
-  else if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l) });
+  else if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l),
+    // The recording overlay is its own window, so the smoke run needs a handle on it to be able
+    // to look at what it draws.
+    overlay: { show: overlayMode, state: overlayState, close: closeOverlay, win: () => overlayWin } });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 

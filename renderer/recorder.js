@@ -58,6 +58,13 @@ async function boot() {
   $('#camDevice').onchange = () => { if ($('#useCam').checked) showCamPreview(); };
   $('#btnStart').onclick = start;
   $('#btnCancel').onclick = () => R.close();
+  // The overlay is the only thing on screen while recording, so its buttons have to reach the
+  // same handlers as this window's.
+  R.onRemote((kind) => {
+    if (kind === 'stop') stop();
+    else if (kind === 'pause') togglePause();
+    else if (kind === 'mark') R.mark('mark');
+  });
   $('#btnPause').onclick = togglePause;
   $('#btnStop').onclick = stop;
   $('#btnMark').onclick = () => { R.mark('mark'); flash('#btnMark'); };
@@ -173,21 +180,27 @@ function makeRecorder(stream, track, bitrate) {
   return rec;
 }
 
+// The count-in is drawn by the transparent overlay, over your actual screen — not inside this
+// window, which would put a window in the shot and look like an app rather than like recording.
 function countdown(n) {
   return new Promise((resolve) => {
     $('#setup').hidden = true;
-    $('#countdown').hidden = false;
-    $('#countNum').textContent = n;
+    R.count(n);
     const iv = setInterval(() => {
       n -= 1;
-      if (n <= 0) { clearInterval(iv); $('#countdown').hidden = true; resolve(); }
-      else $('#countNum').textContent = n;
+      if (n <= 0) { clearInterval(iv); R.count(0); resolve(); }
+      else R.count(n);
     }, 1000);
   });
 }
 
 let elapsed = 0;
-function tick() { if (!paused) { elapsed += 0.5; $('#timer').textContent = fmt(elapsed); } }
+function tick() {
+  if (!paused) { elapsed += 0.5; $('#timer').textContent = fmt(elapsed); }
+  // One clock, in one place. The overlay shows it but never counts it — two things counting is
+  // how a timer drifts against the recording it claims to describe.
+  R.state({ elapsed, paused });
+}
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // Nothing is arriving from the OS. Tear the take down and tell the user exactly what to fix.
@@ -217,6 +230,7 @@ async function togglePause() {
   paused ? await R.pause() : await R.resume();
   $('#bar').classList.toggle('paused', paused);
   $('#btnPause').textContent = paused ? 'Resume' : 'Pause';
+  R.state({ elapsed, paused });
 }
 
 async function stop() {

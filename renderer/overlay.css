@@ -1,0 +1,53 @@
+/* The recording overlay: no window, no chrome, nothing but what it draws.
+   Everything is transparent by default — the window is the whole screen during the count-in, so
+   any opaque pixel would black out the display it is counting over. */
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 100%; height: 100%; background: transparent; overflow: hidden;
+  font-family: 'Archivo', -apple-system, system-ui, sans-serif; -webkit-user-select: none; }
+
+/* ---- the count-in ---- */
+.count { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+.count span {
+  font-family: 'Anton', 'Archivo', sans-serif; font-size: 210px; line-height: 1; color: #fff;
+  /* Readable over anything: a dark halo rather than a panel, so the screen stays visible. */
+  text-shadow: 0 0 40px rgba(0,0,0,.85), 0 0 120px rgba(0,0,0,.7), 0 8px 30px rgba(0,0,0,.6);
+  animation: pop .9s cubic-bezier(.2,.9,.2,1);
+}
+@keyframes pop { from { transform: scale(1.5); opacity: 0 } 40% { opacity: 1 } to { transform: scale(1); opacity: .96 } }
+
+/* ---- the controls ---- */
+/* A pill that floats over the work. Vertical, because a horizontal bar across the bottom is
+   exactly where a dock, a taskbar and a browser's status text already are. */
+.pill {
+  position: fixed; left: 8px; top: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 12px 8px 8px; border-radius: 22px;
+  background: rgba(14, 14, 12, .82);
+  border: 1px solid rgba(255, 255, 255, .1);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .5);
+  backdrop-filter: blur(14px);
+  -webkit-app-region: drag;                   /* the pill itself moves the window */
+}
+.pbtn {
+  -webkit-app-region: no-drag;                /* …but the buttons are buttons */
+  width: 38px; height: 38px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12);
+  color: #f5f3ee; font-size: 15px; padding: 0;
+  transition: background .12s ease, transform .1s ease;
+}
+.pbtn:hover { background: rgba(255,255,255,.16); }
+.pbtn:active { transform: scale(.94); }
+.pbtn.small { width: 30px; height: 30px; font-size: 13px; }
+.pbtn.stop { background: #e5533d; border-color: transparent; }
+.pbtn.stop:hover { background: #f0644e; }
+.sq { width: 12px; height: 12px; border-radius: 2px; background: #fff; }
+.bars { width: 12px; height: 12px; border-left: 4px solid #f5f3ee; border-right: 4px solid #f5f3ee; }
+.pill.paused .bars { width: 0; height: 0; border: 7px solid transparent; border-left: 11px solid #f5f3ee; margin-left: 3px; }
+.time {
+  -webkit-app-region: no-drag;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: #f5f3ee;
+  letter-spacing: .3px; padding: 2px 0;
+}
+.pill.paused .time { color: #8e8b82; }
+.grip { width: 22px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.22); margin-top: 2px; }
