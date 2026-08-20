@@ -21,13 +21,20 @@ export async function runEditTests({ win, settings, app }) {
   const js = (code) => wc.executeJavaScript(code, true);
   // The UI autosaves 400ms after the last edit. Rather than guessing, wait until it says
   // "Saved" — a fixed sleep is exactly the kind of flake a public CI cannot afford.
+  // Wait for the edit to actually be on disk. This asks the page whether a write is still
+  // pending rather than reading the status line: any setStatus() after save() wiped "Unsaved…",
+  // so a test could sail past a debounced write and read the previous value — which is exactly
+  // what happened on a slower CI runner while it passed every time locally.
   const settle = async (ms = 4000) => {
     const started = Date.now();
-    await wait(250);
+    await wait(120);
     while (Date.now() - started < ms) {
-      const status = await js(`document.querySelector('#status')?.textContent || ''`).catch(() => '');
-      if (!/Unsaved/i.test(status)) { await wait(150); return; }
-      await wait(150);
+      const pending = await js(`(() => {
+        if (window.__cve && 'saving' in window.__cve) return window.__cve.saving;
+        return /Unsaved/i.test(document.querySelector('#status')?.textContent || '');
+      })()`).catch(() => false);
+      if (!pending) { await wait(150); return; }
+      await wait(100);
     }
   };
   // Tests that need the network or a model download are tagged `heavy`; everything else is

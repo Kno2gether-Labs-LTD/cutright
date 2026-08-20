@@ -24,7 +24,7 @@ if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "
   echo "   Set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID to complete it."
 fi
 
-npx electron-builder --mac dmg --arm64 \
+npx electron-builder --mac dmg --arm64 --publish never \
   -c.mac.identity="$SHORT" \
   -c.mac.hardenedRuntime=true \
   -c.mac.gatekeeperAssess=false

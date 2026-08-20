@@ -63,7 +63,7 @@ jobs:
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
         run: |
           npm run vendor
-          npx electron-builder --mac dmg --arm64 \
+          npx electron-builder --mac dmg --arm64 --publish never \
             -c.mac.identity="${SIGN_IDENTITY#Developer ID Application: }" \
             -c.mac.hardenedRuntime=true \
             -c.mac.gatekeeperAssess=false
@@ -90,7 +90,10 @@ jobs:
               || echo "::warning::not notarized — Gatekeeper will warn on first launch until it is"
           fi
 
+      # Only a signed build is attached. An unsigned one would REPLACE the signed asset of the
+      # same name on a re-run, quietly turning a signed release into an unsigned one.
       - name: Attach the build to the release
+        if: steps.signing.outputs.signed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.dmg
@@ -98,3 +101,11 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Keep the unsigned build as an artifact instead
+        if: steps.signing.outputs.signed != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cutright-unsigned-dmg
+          path: dist/*.dmg
+          retention-days: 14

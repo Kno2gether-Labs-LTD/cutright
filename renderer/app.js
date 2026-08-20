@@ -19,6 +19,10 @@ window.__cve = {
   get preview() { return { state: preview.state, auto: preview.auto, covers: preview.covers,
                            showing: showingPreview(), removed: cutMap.removed }; },
   now: () => timelineNow(), seek: (t) => seekTimeline(t),
+  // Whether an edit is still on its way to disk. The tests used to infer this from the status
+  // text, which any later setStatus() would wipe — so a test could read the file before the
+  // write and see the old value. This is the actual state.
+  get saving() { return savePending; },
   deselect: () => deselect(),
   get multi() { return { kind: multi.kind, count: multi.set.size }; },
 };
@@ -1086,16 +1090,18 @@ function remove() {
 }
 
 // ---------------------------------------------------------------- save (debounced)
-let saveT, lastEdit = 0;
+let saveT, lastEdit = 0, savePending = false;
 function save() {
   lastEdit = Date.now();
   setStatus('Unsaved…');
   // Schedule the write FIRST. Everything below this line is bookkeeping for the preview, and if
   // any of it ever throws, the user's edit must still reach disk — losing an edit to a broken
   // status badge would be an absurd way to lose work.
+  savePending = true;
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
     const r = await E.saveProject(project);
+    savePending = false;
     lastEdit = Date.now();
     setStatus(r?.ok ? 'Saved' : 'Save failed: ' + (r?.error || ''), r?.ok ? 'ok' : 'error');
   }, 400);
