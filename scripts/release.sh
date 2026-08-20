@@ -78,6 +78,25 @@ fi
 echo "signed=$SIGNED notarized=$NOTARIZED ${DRAFT:+(publishing as a draft)}"
 
 git tag -f "$TAG" && git push -f origin "$TAG"
-gh release create "$TAG" "$DMG" --title "Cutright $TAG" --notes "$NOTE" $DRAFT || \
-  gh release upload "$TAG" "$DMG" --clobber
+
+# A DRAFT has no tag on GitHub until it is published, so `gh release create` cannot find one and
+# happily makes a second draft with the same name — which is how two v0.1.0 drafts appeared.
+# Look for an existing draft by title and update that one instead.
+EXISTING=$(gh api "repos/{owner}/{repo}/releases" --jq \
+  ".[] | select(.tag_name == \"$TAG\" or .name == \"Cutright $TAG\") | .id" 2>/dev/null | head -1)
+if [ -n "$EXISTING" ]; then
+  echo "updating the existing release ($EXISTING)"
+  gh api -X PATCH "repos/{owner}/{repo}/releases/$EXISTING" \
+    -f name="Cutright $TAG" -f body="$NOTE" -F draft="$([ -n "$DRAFT" ] && echo true || echo false)" >/dev/null
+  gh release upload "$TAG" "$DMG" --clobber 2>/dev/null || {
+    # A draft's assets cannot be reached by tag; go through the release id.
+    OLD=$(gh api "repos/{owner}/{repo}/releases/$EXISTING/assets" --jq '.[] | select(.name == "'"$(basename "$DMG")"'") | .id' | head -1)
+    [ -n "$OLD" ] && gh api -X DELETE "repos/{owner}/{repo}/releases/assets/$OLD" >/dev/null
+    gh api --method POST -H "Content-Type: application/octet-stream" \
+      "https://uploads.github.com/repos/{owner}/{repo}/releases/$EXISTING/assets?name=$(basename "$DMG")" \
+      --input "$DMG" >/dev/null
+  }
+else
+  gh release create "$TAG" "$DMG" --title "Cutright $TAG" --notes "$NOTE" $DRAFT
+fi
 echo "released $TAG with $(basename "$DMG")"
