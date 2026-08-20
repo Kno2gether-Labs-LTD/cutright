@@ -27,7 +27,9 @@ DMG=$(ls -t dist/*.dmg | head -1)
 APP="dist/mac-arm64/Cutright.app"
 
 # What is this thing, really?
-AUTH=$(codesign -dv "$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1 || true)
+# --verbose=2 is required: plain -dv does not print the Authority chain at all, so reading it
+# without this reported every signed build as unsigned.
+AUTH=$(codesign -dv --verbose=2 "$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1 || true)
 SIGNED=no; case "$AUTH" in "Developer ID Application:"*) SIGNED=yes ;; esac
 NOTARIZED=no
 xcrun stapler validate "$APP" >/dev/null 2>&1 && NOTARIZED=yes
