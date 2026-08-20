@@ -1331,14 +1331,23 @@ export async function runEditTests({ win, settings, app }) {
     };
     const hadZooms = (p.zooms || []).length;
     await writeProject(p);
+    // Wait for the window to pick the change up. Without this the click below can land before
+    // the suggestions exist in the page, the panel silently declines to open, and every query
+    // after it reads whichever panel happened to be open already.
+    await settle();
 
     await js(`document.querySelector('#btnZoomSuggest').click()`);
     await wait(400);
+    // `.ac-item` is the review-row class shared by auto-cut, sound and this panel, so scope every
+    // query to the inspector AND check which panel is in it. Not doing that is how this test
+    // spent a while counting the auto-cut panel's rows and clicking its button.
     const panel = await js(`(() => ({
       badge: document.querySelector('#selBadge').textContent,
-      rows: document.querySelectorAll('.ac-item').length,
-      ticked: [...document.querySelectorAll('.ac-item input')].filter(c => c.checked).length,
+      rows: document.querySelectorAll('#inspector .ac-item').length,
+      ticked: [...document.querySelectorAll('#inspector .ac-item input')].filter(c => c.checked).length,
     }))()`);
+    expect(panel.badge === 'zoom suggestions',
+      `the zoom review panel did not open — the inspector is showing "${panel.badge}"`);
     expect(panel.rows === 3, `review panel listed ${panel.rows} suggestions, expected 3`);
     // low confidence starts unticked — suggestions are offered, not imposed
     expect(panel.ticked === 2, `${panel.ticked} suggestions pre-selected, expected 2 (low confidence off)`);
@@ -1353,7 +1362,7 @@ export async function runEditTests({ win, settings, app }) {
     // accepting again must not duplicate
     await js(`document.querySelector('#btnZoomSuggest').click()`);
     await wait(300);
-    const second = await js(`document.querySelectorAll('.ac-item').length`);
+    const second = await js(`document.querySelectorAll('#inspector .ac-item').length`);
     expect(second === 1, `already-accepted suggestions came back (${second} rows, expected 1)`);
     return { accepted: after.length - hadZooms, remaining: second };
   });

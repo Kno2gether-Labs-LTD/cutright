@@ -19,26 +19,23 @@ queue. Each entry states what it extends, so none of it is a rewrite.
 9. **`cutright doctor` — lint the edit before you export** — "3 captions land on a cut seam", "scene 4 straddles a cut and will be silently dropped", "peak −0.2 dBTP will clip". Static analysis over `project.json` + `ffprobe`; also the CLI check the agent uses to verify its own work. Six always-right rules, not thirty heuristics. Effort S.
 10. **Signed template packs + the pack store** — the paid layer. The plumbing exists (manifest, picker, user-templates dir that wins on id clash); what's missing is a catalogue, download + Ed25519 verification (`node:crypto`), and a licence field. **Commercial risk, not technical:** Apache-2.0 means anyone can delete the check — sell design work and updates, not DRM. Needs decisions on hosting, payments, an asset EULA that is explicitly *not* Apache-2.0, and **per-pack font licences** (bundling a commercial display font in a sold template is the likeliest legal mistake).
 
-## Known bug — an external edit to project.json can discard an in-app one
+## Fixed — the zoom-suggestion test was reading another panel's rows
 
-`zooms: suggestions from a recording become real zooms when accepted` fails intermittently in
-the full suite (three failures and one pass across four runs; it does not fail under `core`).
-It fails on a clean `main` as well, so it predates the work that found it.
+This was written up here as a save/reload race in the app, with the accepted zooms being lost
+between the mutation and the serialise. That diagnosis was wrong, and worth recording as such.
 
-What the evidence says: the accepted zooms never reach disk at all — `project.zooms` is empty
-after the run, so it is not a late write being read early. The suggestion panel renders three
-rows and two are ticked, which means `zoomSuggest.list` is populated and the Add button is
-enabled. `applyZoomSuggestions` mutates `project.zooms` and then calls `save()`.
+The actual cause was in the test. It wrote `project.json` from outside and clicked the review
+button without waiting for the window to notice, so the suggestions were sometimes not there
+yet and the panel quietly declined to open. Every query after that read whichever panel was
+already in the inspector — `.ac-item` is the review-row class shared by auto-cut, sound and the
+zoom suggestions, and the queries were not scoped. When the auto-cut panel happened to be
+showing three proposals with two ticked, the assertions passed on the wrong panel and the
+"Add" click applied cuts instead of zooms, which is why it read 0 → 0.
 
-The likely mechanism is the file watcher. The test writes `project.json` from outside, the app
-reloads and replaces `project` with a fresh object, and if that lands between the mutation and
-the serialise, the edit is written over. Under `core` the app is idle and the reload wins the
-race early; under the full suite it is busy and lands in the middle.
-
-This matters well beyond the test. The whole premise is that an agent edits `project.json`
-while you are looking at it, so an in-app edit racing an external one is the normal case, not a
-contrived one. A fix probably means guarding `save()` on the mtime the project was loaded at,
-and re-applying rather than overwriting when it has moved.
+Fixed by waiting for the reload, scoping the queries to `#inspector`, and asserting on
+`#selBadge` — which the test was already reading and never checking. Three consecutive full
+runs green. No product bug: the reload guard (`Date.now() - lastEdit < 3000`) was doing its job
+the whole time.
 
 ## Notes carried from the review
 - A creator's real cost centres, in order: finding the bad bits (1, 7), reformatting for every platform (2), waiting for exports (4), and the post-edit publishing chores (8).
