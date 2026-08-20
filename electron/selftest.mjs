@@ -5,6 +5,8 @@
 // Run: CVE_SMOKE=ui,edit npm run smoke
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
+const { pickEncoder } = createRequire(import.meta.url)('./encoder.cjs');
 import { join, dirname } from 'node:path';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -480,7 +482,7 @@ export async function runEditTests({ win, settings, app }) {
     // a real recording to feed the pipeline, trimmed from whatever master this project has
     const sourceDur = Math.min(18, Math.max(4, Math.floor(disk().meta.duration - 0.5)));
     execFileSync('ffmpeg', ['-hide_banner', '-y', '-ss', '0', '-t', String(sourceDur), '-i',
-      join(settings.work, 'graded_master.mp4'), '-c:v', 'h264_videotoolbox', '-b:v', '6M',
+      join(settings.work, 'graded_master.mp4'), '-c:v', pickEncoder(), '-b:v', '6M',
       '-c:a', 'aac', src], { stdio: 'ignore' });
 
     const r = await js(`(async () => {

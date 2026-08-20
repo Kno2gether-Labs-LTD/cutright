@@ -564,7 +564,12 @@ def main():
         run(["python3",f"{SKILL}/scenes_png.py","--spec",os.path.join(T,"scenes.json"),
              "--outroot",os.path.join(T,"sf"),"--frame",f"{VW}x{VH}","--fps",str(FPS)])
         man=json.load(open(os.path.join(T,"sf","manifest.json")))["card"]
-        cx,cy,cw,ch=man["x"],man["y"],man["w"],man["h"]; crw=round(1080*cw/ch); crx=(1920-crw)//2
+        cx,cy,cw,ch=man["x"],man["y"],man["w"],man["h"]
+        # The crop that fills the card with the picture. This used to be written against 1920x1080
+        # literally, which quietly meant the wrong region on any other frame size — and could come
+        # out an ODD width, which yuv420p cannot represent, so libx264 refused the filter graph
+        # while VideoToolbox happened to tolerate it. Even numbers, and the project's own size.
+        crw=round(VH*cw/ch); crw-=crw%2; crx=max(0,(VW-crw)//2); crx-=crx%2
         clips=[]
         for s in scenes:
             clip=os.path.join(T,f"clip_{s['id']}.mp4")
@@ -572,8 +577,13 @@ def main():
                 # the original behaviour: the picture is cropped into the card inside the clip
                 run(["ffmpeg","-hide_banner","-y","-ss",str(s["start"]),"-t",str(s["dur"]),"-i",graded,
                      "-framerate",str(FPS),"-i",os.path.join(T,"sf",s["id"],"f_%04d.png"),
-                     "-filter_complex",f"[0:v]crop={crw}:1080:{crx}:0,scale={cw}:{ch},pad={VW}:{VH}:{cx}:{cy}:color=black[v];[v][1:v]overlay=0:0[o]",
-                     "-map","[o]","-an","-c:v","h264_videotoolbox","-b:v","16M","-pix_fmt","yuv420p","-r",str(FPS),clip],
+                     # setsar=1 is not decoration. `scale` sets the output sample aspect ratio to PRESERVE the
+                     # display aspect it was given, so scaling 788x1080 into a 596x816 card leaves SAR at
+                     # ~0.999 — and the automatic pixel-format conversion then resizes to square pixels and
+                     # asks the encoder for 1920x1081. VideoToolbox accepted the odd height; libx264 
+                     # correctly refuses, which is how this surfaced. Square pixels, stated.
+                     "-filter_complex",f"[0:v]crop={crw}:{VH}:{crx}:0,scale={cw}:{ch},setsar=1,pad={VW}:{VH}:{cx}:{cy}:color=black[v];[v][1:v]overlay=0:0[o]",
+                     "-map","[o]","-an","-c:v",pick_encoder(),"-b:v","16M","-pix_fmt","yuv420p","-r",str(FPS),clip],
                     log=os.path.join(T,f"clip_{s['id']}.log"))
             else:
                 # the framing stage has already moved the picture into the card, so the scene is

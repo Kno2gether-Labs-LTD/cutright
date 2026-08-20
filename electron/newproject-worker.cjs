@@ -7,6 +7,7 @@
 // Steps: probe → normalise/grade → transcribe → build project.json
 const { spawn } = require('node:child_process');
 const { runWatched } = require('./run-watched.cjs');
+const { pickEncoder } = require('./encoder.cjs');
 const { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } = require('node:fs');
 const { join, basename, extname } = require('node:path');
 
@@ -86,7 +87,7 @@ async function create(job) {
   const graded = join(dest, 'graded_master.mp4');
   progress('grade', 'building the master (hardware encode)', 10);
   await run('ffmpeg', ['-hide_banner', '-y', '-i', source, '-vf', vf, '-r', String(targetFps),
-    '-c:v', 'h264_videotoolbox', '-b:v', '14M', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+    '-c:v', pickEncoder(), '-b:v', '14M', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
     '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', graded], {
       onLine: (l) => {
         const t = /time=\s*([\d:.]+)/.exec(l);
