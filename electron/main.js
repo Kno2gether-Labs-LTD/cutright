@@ -19,6 +19,7 @@ import { listLibrary } from './library.mjs';
 import { listAgents, byId as agentById, launchCommand, kickoffPrompt, resolveBin, DEFAULT_AGENT } from './agents.mjs';
 import { segmentsFrom, chunk as chunkTranscript, promptFor, parsePlan, merge as mergeCuts, SYSTEM as CUT_SYSTEM } from './cutplan.mjs';
 import * as llm from './llm.mjs';
+import { snapshot as guardSnapshot, diff as guardDiff, restore as guardRestore } from './guard.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -1091,6 +1092,45 @@ function registerIpc() {
     // and swaps the player's source underneath tests that are checking something else.
     testing: !!process.env.CVE_SMOKE,
   }));
+
+  // Anything edited by hand is stamped in the project; this keeps a copy of those next to it, so
+  // that after the agent has rewritten everything there is something to compare against. Written
+  // when the agent is handed the project, which is the moment the risk starts.
+  const guardFile = () => join(settings.work, '.cutright', 'handoff.json');
+  const readGuard = () => { try { return JSON.parse(readFileSync(guardFile(), 'utf8')); } catch { return null; } };
+  const readProject = () => JSON.parse(readFileSync(projectPath(), 'utf8'));
+
+  ipcMain.handle('guard:snapshot', () => {
+    if (!settings.work) return { error: 'no workspace open' };
+    try {
+      const snap = guardSnapshot(readProject());
+      mkdirSync(dirname(guardFile()), { recursive: true });
+      writeFileSync(guardFile(), JSON.stringify(snap, null, 2));
+      return { ok: true, count: snap.count, at: snap.at };
+    } catch (e) { return { error: e.message }; }
+  });
+
+  ipcMain.handle('guard:check', () => {
+    if (!settings.work) return { error: 'no workspace open' };
+    const before = readGuard();
+    if (!before) return { ok: true, none: true, missing: [], moved: [], checked: 0 };
+    try {
+      const d = guardDiff(before, readProject());
+      return { ok: true, at: before.at, ...d };
+    } catch (e) { return { error: e.message }; }
+  });
+
+  ipcMain.handle('guard:restore', () => {
+    if (!settings.work) return { error: 'no workspace open' };
+    const before = readGuard();
+    if (!before) return { error: 'nothing was recorded to restore from' };
+    try {
+      const p = readProject();
+      const put = guardRestore(p, before);
+      writeFileSync(projectPath(), JSON.stringify(p, null, 2));
+      return { ok: true, restored: put };
+    } catch (e) { return { error: e.message }; }
+  });
 
   // The endpoint that reads the transcript and suggests cuts. Only the OpenAI-compatible shape
   // is supported, which is not a limitation so much as the point: Ollama, LM Studio, llama.cpp

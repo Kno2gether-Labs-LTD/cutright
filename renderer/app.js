@@ -19,6 +19,8 @@ window.__cve = {
   get preview() { return { state: preview.state, auto: preview.auto, covers: preview.covers,
                            showing: showingPreview(), removed: cutMap.removed }; },
   now: () => timelineNow(), seek: (t) => seekTimeline(t),
+  deselect: () => deselect(),
+  get multi() { return { kind: multi.kind, count: multi.set.size }; },
 };
 
 // ---------------------------------------------------------------- boot
@@ -121,8 +123,11 @@ async function loadProject() {
   renderInspector();
 }
 
-async function reloadIfChanged() {
-  if (Date.now() - lastEdit < 3000) return;         // don't clobber a fresh local edit
+async function reloadIfChanged(force) {
+  // `force` is for changes WE asked main to make — restoring hand edits, say. Those must show up
+  // immediately; the delay below exists to stop an unrelated write clobbering something the user
+  // is still typing, which is a different situation.
+  if (!force && Date.now() - lastEdit < 3000) return;
   const p = await E.getProject();
   if (p.error || JSON.stringify(p) === JSON.stringify(project)) return;
   project = p; dur = p.meta.duration || 1; fps = p.meta.fps || 30;
@@ -229,7 +234,8 @@ function renderTimeline() {
   let lastX = -99;
   cues.forEach((c, i) => {
     const x = t2x(c.start), w = Math.max(wide ? 14 : 2, t2x((c.end || c.start + 0.4) - c.start));
-    if (!wide && x - lastX < 1.2 && !(sel?.kind === 'caption' && sel.index === i)) return;  // don't stack ticks
+    // Thinned-out ticks would otherwise hide the very cues the user just selected.
+    if (!wide && x - lastX < 1.2 && !(sel?.kind === 'caption' && sel.index === i) && !inMulti('caption', i)) return;
     lastX = x;
     const el = document.createElement('div');
     el.className = 'cap' + (c.tokens?.some((t) => t.e) ? ' emph' : '') + (wide ? ' wide' : '');
@@ -237,7 +243,8 @@ function renderTimeline() {
     if (wide) el.textContent = (c.tokens || []).map((t) => t.t).join(' ');
     el.title = (c.tokens || []).map((t) => t.t).join(' ') + ` · ${fmt(c.start)}`;
     if (sel?.kind === 'caption' && sel.index === i) el.classList.add('selected');
-    el.onclick = (ev) => { ev.stopPropagation(); select('caption', i); };
+    if (inMulti('caption', i)) el.classList.add('multi');
+    el.onclick = (ev) => { ev.stopPropagation(); pick('caption', i, ev); };
     frag.appendChild(el);
   });
   lc.appendChild(frag);
@@ -278,7 +285,8 @@ function renderTimeline() {
     el.textContent = (kind === 'music' ? '♪ ' : '✳ ') + ((L.src || '').split('/').pop() || 'empty');
     el.title = `${kind} · ${L.src || 'no source'} · ${fmt(L.start || 0)}`;
     if (sel?.kind === kind && sel.index === i) el.classList.add('selected');
-    el.onclick = (ev) => { ev.stopPropagation(); select(kind, i); };
+    if (inMulti(kind, i)) el.classList.add('multi');
+    el.onclick = (ev) => { ev.stopPropagation(); pick(kind, i, ev); };
     la.appendChild(el);
   }));
 
@@ -295,7 +303,8 @@ function fillLane(laneSel, items, kind) {
     el.textContent = it.label || '';
     el.title = it.title || '';
     if (sel?.kind === kind && sel.index === it.i) el.classList.add('selected');
-    el.onclick = (ev) => { ev.stopPropagation(); select(kind, it.i); };
+    if (inMulti(kind, it.i)) el.classList.add('multi');
+    el.onclick = (ev) => { ev.stopPropagation(); pick(kind, it.i, ev); };
     lane.appendChild(el);
   });
 }
@@ -309,14 +318,7 @@ function positionPlayhead() {
 let lastT = -1;
 function tick() {
   const t = timelineNow() || 0;
-  // A cut removes a span; the player skips it. This is the one part of the edit that needs no
-  // render to be truthful, so it is honoured the instant the cut exists — including while a
-  // preview is still building, and when there is no preview at all.
-  if (!showingPreview() && cutMap.inCut(t)) {
-    const to = cutMap.skipTo(t);
-    if (to == null) { video.pause(); video.currentTime = Math.max(0, dur - 0.05); }
-    else if (Math.abs((video.currentTime || 0) - to) > 0.01) video.currentTime = to;
-  }
+  skipPastCuts(t);
   if (t !== lastT) {
     lastT = t;
     positionPlayhead();
@@ -390,7 +392,56 @@ function initTimelineInteraction() {
 }
 
 // ---------------------------------------------------------------- selection + inspector
+// Selecting more than one thing.
+//
+// The inspector on the right edits whatever is selected, which is fine for one caption and
+// tedious for forty. Captions are the case that matters: a line sitting too low, or too small,
+// is wrong for a whole passage rather than for one cue, and fixing it one at a time is not
+// editing, it is data entry. So the timeline holds a SET, the modifiers are the ones every
+// other editor uses, and the keyboard nudges the whole set at once.
+let multi = { kind: null, set: new Set(), anchor: null };
+
+const inMulti = (kind, i) => multi.kind === kind && multi.set.has(i);
+const multiCount = () => multi.set.size;
+function clearMulti() { multi = { kind: null, set: new Set(), anchor: null }; }
+
+// The indices the next edit applies to: the multi-selection if there is one, otherwise whatever
+// single thing is selected. One list, so no edit has to care which way it was chosen.
+function targets(kind) {
+  if (multi.kind === kind && multi.set.size) return [...multi.set].sort((a, b) => a - b);
+  return sel?.kind === kind ? [sel.index] : [];
+}
+
+// Every clip in the timeline goes through here, so the modifiers behave the same everywhere.
+function pick(kind, i, ev) {
+  const extend = ev?.shiftKey;
+  const toggle = ev?.metaKey || ev?.ctrlKey;
+  if (!extend && !toggle) { clearMulti(); select(kind, i); return; }
+
+  if (multi.kind !== kind) { multi = { kind, set: new Set(), anchor: sel?.kind === kind ? sel.index : i }; }
+  if (extend && multi.anchor != null) {
+    const [a, b] = [Math.min(multi.anchor, i), Math.max(multi.anchor, i)];
+    for (let n = a; n <= b; n++) multi.set.add(n);
+  } else {
+    if (multi.set.has(i)) multi.set.delete(i); else multi.set.add(i);
+    multi.anchor = i;
+  }
+  // Keep a single selection in step, so the inspector always has something to talk about.
+  sel = { kind, index: multi.set.has(i) ? i : ([...multi.set][0] ?? i) };
+  renderTimeline(); renderInspector();
+}
+
+function selectAllCaptions() {
+  const n = (project?.captions?.cues || []).length;
+  if (!n) return;
+  multi = { kind: 'caption', set: new Set(Array.from({ length: n }, (_, i) => i)), anchor: 0 };
+  sel = { kind: 'caption', index: 0 };
+  renderTimeline(); renderInspector();
+  setStatus(`${n} captions selected — arrows move them, [ and ] resize`, 'ok');
+}
+
 function select(kind, index) {
+  if (multi.kind !== kind) clearMulti();
   sel = { kind, index };
   const el = elemOf(sel);
   if (el && el.start != null) seekTimeline(el.start);
@@ -401,7 +452,66 @@ function select(kind, index) {
     scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.35);
   }
 }
-function deselect() { sel = null; renderTimeline(); renderInspector(); }
+function deselect() { sel = null; clearMulti(); renderTimeline(); renderInspector(); }
+
+// ---------------------------------------------------------------- protecting hand edits
+// The agent rewrites project.json, so anything you did yourself has to be identifiable — by an
+// id rather than by where it sits in a list, because the agent reorders. Stamping happens at the
+// moment of the edit; the snapshot and the comparison live in electron/guard.mjs.
+const MANUAL_LIST = { cut: 'cuts', zoom: 'zooms', frame: 'frames', scene: 'scenes', overlay: 'overlays' };
+
+function markManual(kind, indices) {
+  if (!project) return;
+  const list = kind === 'caption' ? (project.captions?.cues || []) : (project[MANUAL_LIST[kind]] || []);
+  for (const i of [].concat(indices)) {
+    const el = list[i];
+    if (!el) continue;
+    el.manual = true;
+    // Captions are identified by when they start and what they say — there can be hundreds of
+    // them and an id on every one would bloat the file for nothing.
+    if (kind !== 'caption' && !el.id) el.id = `${kind[0]}${Date.now().toString(36)}${i}`;
+  }
+}
+
+// ---------------------------------------------------------------- nudging captions
+// Height and size are stored per cue as overrides on top of project.captions.defaults. Writing
+// an override onto every cue when the user meant "all of them" would bloat project.json with
+// hundreds of identical lines and make the default meaningless, so a change that covers every
+// cue moves the DEFAULT instead and clears the overrides it replaces. Same visible result, and
+// the file still says what the user actually decided.
+function nudgeCaptions({ dy = 0, dsize = 0 }) {
+  const cues = project?.captions?.cues || [];
+  const idx = targets('caption');
+  if (!cues.length || !idx.length) return false;
+  const d = project.captions.defaults;
+  const H = project.meta?.height || 1080;
+  const all = idx.length === cues.length;
+
+  if (all) {
+    if (dy) d.cy = Math.round(clamp((d.cy ?? H * 0.66) + dy, 0, H));
+    if (dsize) d.fontsize = Math.round(clamp((d.fontsize ?? H * 0.056) + dsize, 8, H / 2));
+    for (const i of idx) {
+      const o = cues[i].overrides;
+      if (!o) continue;
+      if (dy) delete o.cy;
+      if (dsize) delete o.fontsize;
+      if (!Object.keys(o).length) delete cues[i].overrides;
+    }
+  } else {
+    for (const i of idx) {
+      const c = cues[i];
+      const o = (c.overrides = c.overrides || {});
+      if (dy) o.cy = Math.round(clamp((o.cy ?? d.cy) + dy, 0, H));
+      if (dsize) o.fontsize = Math.round(clamp((o.fontsize ?? d.fontsize) + dsize, 8, H / 2));
+    }
+  }
+  markManual('caption', idx);
+  save();
+  renderInspector();
+  const what = dy ? (dy < 0 ? 'higher' : 'lower') : (dsize > 0 ? 'bigger' : 'smaller');
+  setStatus(`${idx.length} caption${idx.length === 1 ? '' : 's'} ${what}${all ? ' (moved the default)' : ''}`, 'ok');
+  return true;
+}
 
 function elemOf(s) {
   if (!s || !project) return null;
@@ -451,6 +561,9 @@ const btnRow = (...buttons) => { const d = document.createElement('div'); d.clas
 
 function renderInspector() {
   const box = $('#inspector'); box.innerHTML = '';
+  // More than one caption selected is its own panel: editing them one at a time is the thing
+  // this exists to avoid.
+  if (multi.kind === 'caption' && multi.set.size > 1) return renderCaptionMultiInspector(box);
   const e = elemOf(sel);
   $('#selBadge').textContent = e ? `${sel.kind} · ${fmt(e.start || 0)}` : 'nothing selected';
   if (!e) {
@@ -487,6 +600,78 @@ function renderInspector() {
   else if (sel.kind === 'zoom') renderZoomInspector(box, e);
   else if (sel.kind === 'frame') renderFrameInspector(box, e);
   else renderAudioInspector(box, e);
+}
+
+function renderCaptionMultiInspector(box) {
+  const cues = project.captions?.cues || [];
+  const idx = targets('caption');
+  const d = project.captions.defaults;
+  const all = idx.length === cues.length;
+  $('#selBadge').textContent = `${idx.length} captions`;
+
+  box.appendChild(sechead(`${idx.length} caption${idx.length === 1 ? '' : 's'} selected`
+    + (all ? ' — all of them' : '')));
+  box.appendChild(hint(all
+    ? 'Changing height or size here moves the project default, so project.json keeps saying what you '
+      + 'decided rather than repeating it on every cue.'
+    : 'Height and size apply to just these cues, as overrides on top of the defaults.'));
+
+  // The current value, when they agree; otherwise say so rather than showing one of them.
+  const valuesOf = (key) => [...new Set(idx.map((i) => cues[i].overrides?.[key] ?? d[key]))];
+  const cyVals = valuesOf('cy'), sizeVals = valuesOf('fontsize');
+  const setAll = (key, v) => {
+    const H = project.meta?.height || 1080;
+    const val = Math.round(clamp(+v, key === 'cy' ? 0 : 8, key === 'cy' ? H : H / 2));
+    if (all) {
+      d[key] = val;
+      for (const i of idx) {
+        const o = cues[i].overrides;
+        if (!o) continue;
+        delete o[key];
+        if (!Object.keys(o).length) delete cues[i].overrides;
+      }
+    } else {
+      for (const i of idx) { const c = cues[i]; (c.overrides = c.overrides || {})[key] = val; }
+    }
+    markManual('caption', idx);
+    save(); renderInspector(); renderTimeline();
+  };
+
+  box.appendChild(rowOf([
+    field(`Height${cyVals.length > 1 ? ' (mixed)' : ''}`, cyVals.length === 1 ? cyVals[0] : '',
+      (v) => v !== '' && setAll('cy', v), 'number'),
+    field(`Size${sizeVals.length > 1 ? ' (mixed)' : ''}`, sizeVals.length === 1 ? sizeVals[0] : '',
+      (v) => v !== '' && setAll('fontsize', v), 'number'),
+  ]));
+
+  box.appendChild(btnRow(
+    btn('Higher', () => nudgeCaptions({ dy: -8 })),
+    btn('Lower', () => nudgeCaptions({ dy: 8 })),
+    btn('Smaller', () => nudgeCaptions({ dsize: -4 })),
+    btn('Bigger', () => nudgeCaptions({ dsize: 4 })),
+  ));
+  box.appendChild(hint('Or use the keyboard: ↑ ↓ move them, [ and ] resize, hold Shift for one pixel '
+    + 'at a time. ⌘A selects every caption; Esc clears the selection.'));
+
+  box.appendChild(sep());
+  box.appendChild(btnRow(
+    btn('Select all captions', () => selectAllCaptions()),
+    btn('Clear selection', () => { deselect(); }),
+    btn('Reset to default', () => {
+      for (const i of idx) {
+        const o = cues[i].overrides;
+        if (!o) continue;
+        delete o.cy; delete o.fontsize;
+        if (!Object.keys(o).length) delete cues[i].overrides;
+      }
+      markManual('caption', idx);
+      save(); renderInspector(); renderTimeline();
+      setStatus(`${idx.length} captions back to the default height and size`, 'ok');
+    }),
+  ));
+
+  const preview = idx.slice(0, 6).map((i) => (cues[i].tokens || []).map((t) => t.t).join(' ')).join(' · ');
+  box.appendChild(hint(preview.slice(0, 220) + (idx.length > 6 ? ' …' : '')));
 }
 
 function renderCaptionInspector(box, e) {
@@ -637,7 +822,8 @@ function renderAudioInspector(box, e) {
 // same project survives a change of resolution.
 function addZoom() {
   project.zooms = project.zooms || [];
-  project.zooms.push({ id: 'z' + Date.now(), start: +(timelineNow() || 0).toFixed(2),
+  // Added by hand from the timeline, so it is a decision the agent must not quietly drop.
+  project.zooms.push({ manual: true, id: 'z' + Date.now(), start: +(timelineNow() || 0).toFixed(2),
                        dur: 2, scale: 1.3, x: 0.5, y: 0.5, source: 'manual' });
   project.zooms.sort((a, b) => a.start - b.start);
   save(); renderTimeline();
@@ -904,16 +1090,18 @@ let saveT, lastEdit = 0;
 function save() {
   lastEdit = Date.now();
   setStatus('Unsaved…');
-  // The cut map is what the playhead and the player run on, so it has to move with the edit
-  // rather than with the save that follows it.
-  rebuildCutMap();
-  schedulePreview();
+  // Schedule the write FIRST. Everything below this line is bookkeeping for the preview, and if
+  // any of it ever throws, the user's edit must still reach disk — losing an edit to a broken
+  // status badge would be an absurd way to lose work.
   clearTimeout(saveT);
   saveT = setTimeout(async () => {
     const r = await E.saveProject(project);
     lastEdit = Date.now();
     setStatus(r?.ok ? 'Saved' : 'Save failed: ' + (r?.error || ''), r?.ok ? 'ok' : 'error');
   }, 400);
+  // The cut map is what the playhead and the player run on, so it moves with the edit rather
+  // than with the save that follows it.
+  try { rebuildCutMap(); schedulePreview(); } catch (e) { console.warn('[preview]', e); }
 }
 
 // ---------------------------------------------------------------- add / generate
@@ -940,7 +1128,7 @@ document.addEventListener('click', (ev) => {
 function addCut() {
   project.cuts = project.cuts || [];
   const t = +(timelineNow() || 0).toFixed(2);
-  project.cuts.push({ start: t, end: Math.min(dur, t + 2) });
+  project.cuts.push({ manual: true, id: 'c' + Date.now(), start: t, end: Math.min(dur, t + 2) });
   save(); renderTimeline(); select('cut', project.cuts.length - 1);
 }
 
@@ -949,7 +1137,7 @@ async function addOverlay() {
   if (!r?.path) return;
   project.overlays = project.overlays || [];
   project.overlays.push({
-    id: 'ov' + Date.now(), src: r.path, start: +(timelineNow() || 0).toFixed(2),
+    manual: true, id: 'ov' + Date.now(), src: r.path, start: +(timelineNow() || 0).toFixed(2),
     dur: r.duration || 4, x: 0, y: 0,
   });
   save(); renderTimeline(); select('overlay', project.overlays.length - 1);
@@ -1434,7 +1622,8 @@ function cutSelection() {
   const span = spanForSelection();
   if (!span) { setStatus('Select some words first', 'error'); return; }
   project.cuts = project.cuts || [];
-  project.cuts.push({ ...span, source: 'transcript' });
+  // Cutting a selection in the transcript editor is as deliberate as dragging one on the track.
+  project.cuts.push({ manual: true, id: 'c' + Date.now(), ...span, source: 'transcript' });
   mergeCuts();
   save(); renderTimeline(); renderTranscriptPanel();
   setStatus(`Cut ${(span.end - span.start).toFixed(1)}s at ${fmt(span.start)}`, 'ok');
@@ -1564,6 +1753,11 @@ async function startAgentEdit() {
   // command line. Bypass mode where the agent supports it: it is working inside the user's own
   // project folder and a permission prompt per file edit makes the loop unusable. The user
   // starts it knowingly, from a button that says what it does.
+  // Record what the user did by hand BEFORE the agent is let near it. This is the only moment
+  // the two are guaranteed to be in the state the user left them in.
+  const snap = await E.guard.snapshot();
+  if (snap?.count) setStatus(`${snap.count} hand edit${snap.count === 1 ? '' : 's'} recorded — Check will tell you if any go missing`, 'ok');
+
   const a = await E.agents.launch();
   if (!a.available) {
     setStatus(`${a.name} is not installed — choose another agent, or install it`, 'error');
@@ -2001,6 +2195,45 @@ async function runVerify() {
     : `<b>${r.errors}</b> thing(s) a render would get wrong · <b>${r.warnings}</b> worth a look`;
   wrap.appendChild(sum);
 
+  // Did anything the user did by hand not survive the agent? This is asked separately from the
+  // engine's own checks because it is a different question: not "is this project renderable" but
+  // "is this still the edit you made".
+  const g = await E.guard.check();
+  if (g?.ok && !g.none) {
+    const lost = [...(g.missing || []), ...(g.moved || [])];
+    const gsum = document.createElement('div'); gsum.className = 'ac-summary';
+    if (!lost.length) {
+      gsum.innerHTML = `Your ${g.checked} hand edit${g.checked === 1 ? '' : 's'} <b>are all still there</b>, `
+        + 'unchanged since the agent was given the project.';
+      wrap.appendChild(gsum);
+    } else {
+      gsum.innerHTML = `<b>${lost.length}</b> of your ${g.checked} hand edit${g.checked === 1 ? '' : 's'} `
+        + 'did not survive the agent — the render would not include them.';
+      wrap.appendChild(gsum);
+      const gl = document.createElement('div'); gl.className = 'ac-list';
+      lost.forEach((m) => {
+        const row = document.createElement('div'); row.className = 'ac-item';
+        const t = document.createElement('span'); t.className = 't'; t.textContent = '✗';
+        const lbl = document.createElement('span'); lbl.className = 'lbl';
+        const at = m.item?.start != null ? ` at ${fmt(m.item.start)}` : '';
+        lbl.textContent = `${m.kind.replace(/s$/, '')}${at} — ${m.why}`;
+        const rsn = document.createElement('span'); rsn.className = 'rsn error'; rsn.textContent = 'yours';
+        row.append(t, lbl, rsn);
+        if (m.item?.start != null) row.onclick = () => seekTimeline(m.item.start);
+        gl.appendChild(row);
+      });
+      wrap.appendChild(gl);
+      wrap.appendChild(btnRow(btn(`Put ${lost.length} back`, async () => {
+        const rr = await E.guard.restore();
+        if (rr?.error) return setStatus('Could not restore: ' + rr.error, 'error');
+        setStatus(`Restored ${rr.restored} of your edits`, 'ok');
+        await reloadIfChanged(true);
+        renderTimeline();
+        runVerify();
+      }, 'primary')));
+    }
+  }
+
   if (r.issues?.length) {
     const list = document.createElement('div'); list.className = 'ac-list';
     r.issues.forEach((i) => {
@@ -2387,6 +2620,22 @@ function initKeys() {
       document.activeElement?.closest?.('#terminal');
     if (typing) return;
     const frame = 1 / (fps || 30);
+
+    // Captions first: when some are selected the arrows and brackets belong to them, so the
+    // hand stays on the keyboard instead of going back to the inspector for every cue.
+    const caps = targets('caption');
+    if (caps.length) {
+      const fine = ev.shiftKey;
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); nudgeCaptions({ dy: fine ? -1 : -8 }); return; }
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); nudgeCaptions({ dy: fine ? 1 : 8 }); return; }
+      if (ev.key === '[') { ev.preventDefault(); nudgeCaptions({ dsize: fine ? -1 : -4 }); return; }
+      if (ev.key === ']') { ev.preventDefault(); nudgeCaptions({ dsize: fine ? 1 : 4 }); return; }
+    }
+    if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'a' || ev.key === 'A')) {
+      ev.preventDefault(); selectAllCaptions(); return;
+    }
+    if (ev.metaKey || ev.ctrlKey) return;     // leave the rest of the system's shortcuts alone
+
     switch (ev.key) {
       case ' ': ev.preventDefault(); video.paused ? video.play() : video.pause(); break;
       case 'ArrowLeft': ev.preventDefault(); seekTimeline(timelineNow() - (ev.shiftKey ? 1 : frame)); break;
@@ -2677,3 +2926,21 @@ function renderPreviewBadge() {
     ? 'The player is showing the edit as it will render — cuts, zooms, framing, captions and panels.'
     : 'The player is showing the untouched footage. Cuts are still skipped as you play.';
 }
+
+// A cut removes a span; the player skips it. This is the one part of the edit that needs no
+// render to be truthful, so it is honoured the instant the cut exists — including while a
+// preview is still building, and when there is none at all.
+//
+// Driven by the video's own events as well as the animation frame, because Electron throttles
+// requestAnimationFrame for a window that is not in front. A skip that only works while the
+// window has focus is not a skip.
+function skipPastCuts(t) {
+  if (!project || showingPreview()) return;
+  const now = t != null ? t : (video.currentTime || 0);
+  if (!cutMap.inCut(now)) return;
+  const to = cutMap.skipTo(now);
+  if (to == null) { video.pause(); video.currentTime = Math.max(0, dur - 0.05); return; }
+  if (Math.abs((video.currentTime || 0) - to) > 0.01) video.currentTime = to;
+}
+video.addEventListener('timeupdate', () => skipPastCuts());
+video.addEventListener('seeked', () => skipPastCuts());

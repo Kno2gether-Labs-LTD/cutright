@@ -1143,6 +1143,91 @@ export async function runEditTests({ win, settings, app }) {
     return { added: added.length, x: z.x, y: z.y, start: z.start };
   });
 
+  await test('captions: several can be selected together and moved with the keyboard', async () => {
+    const cues = disk().captions?.cues || [];
+    if (cues.length < 3) return { skipped: 'not enough cues in this project' };
+
+    // Click the first, then shift-click the third: the range in between comes with it.
+    await js(`(() => { const c = document.querySelectorAll('#laneCaps .cap'); c[0].click(); })()`);
+    await wait(120);
+    await js(`(() => { const c = document.querySelectorAll('#laneCaps .cap');
+      c[2].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); })()`);
+    await wait(200);
+    const picked = await js(`(() => ({
+      badge: document.querySelector('#selBadge').textContent,
+      lit: document.querySelectorAll('#laneCaps .cap.multi').length,
+    }))()`);
+    expect(/3 captions/.test(picked.badge), `the inspector says "${picked.badge}", expected 3 captions`);
+    expect(picked.lit >= 3, `${picked.lit} cues are lit up, expected at least 3`);
+
+    const before = (disk().captions.cues || []).slice(0, 3).map((c) => c.overrides?.cy ?? disk().captions.defaults.cy);
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))`);
+    await settle();
+    const after = (disk().captions.cues || []).slice(0, 3).map((c) => c.overrides?.cy ?? disk().captions.defaults.cy);
+    expect(after.every((v, i) => v === before[i] - 8),
+      `arrow up should raise all three by 8: ${before.join(',')} → ${after.join(',')}`);
+
+    // …and a cue that was NOT selected must not have moved.
+    if (cues.length > 3) {
+      const d = disk();
+      const untouched = d.captions.cues[3].overrides?.cy;
+      expect(untouched === undefined || untouched === before[0],
+        'a caption that was not selected moved anyway');
+    }
+
+    // Size, and the marking that protects it from the agent later.
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true }))`);
+    await settle();
+    const d2 = disk();
+    const sized = d2.captions.cues.slice(0, 3);
+    expect(sized.every((c) => c.manual === true), 'hand-edited cues were not marked as such');
+
+    // Put it back the way it was.
+    const restore = disk();
+    restore.captions.cues.slice(0, 4).forEach((c) => { delete c.overrides; delete c.manual; });
+    await writeProject(restore);
+    await settle();
+    await js(`window.__cve.deselect ? window.__cve.deselect() : document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    return { selected: picked.lit, movedBy: before[0] - after[0] };
+  });
+
+  await test('guard: an edit made by hand is missed when it disappears', async () => {
+    // The promise this makes to the user is that the agent cannot quietly drop something they
+    // did themselves. Prove it by doing exactly that and checking it is caught.
+    const p = disk();
+    const kept = p.cuts || [];
+    p.cuts = [...kept, { id: 'guard-test', start: at(0.55), end: at(0.62), manual: true }];
+    await writeProject(p);
+    await settle();
+
+    const snap = await js(`(async () => await window.editor.guard.snapshot())()`, true);
+    expect(snap.count >= 1, `nothing was recorded to protect (count ${snap.count})`);
+
+    // Now be the agent, and lose it.
+    const wrecked = disk();
+    wrecked.cuts = (wrecked.cuts || []).filter((c) => c.id !== 'guard-test');
+    await writeProject(wrecked);
+    await settle();
+
+    const check = await js(`(async () => await window.editor.guard.check())()`, true);
+    expect((check.missing || []).length === 1,
+      `losing a hand-made cut was not noticed (${JSON.stringify(check.missing)})`);
+    expect(check.missing[0].kind === 'cuts', 'it was reported as the wrong kind');
+
+    const back = await js(`(async () => await window.editor.guard.restore())()`, true);
+    expect(back.restored >= 1, 'restoring put nothing back');
+    const after = disk();
+    expect((after.cuts || []).some((c) => c.id === 'guard-test'), 'the cut was not actually restored');
+    const clean = await js(`(async () => await window.editor.guard.check())()`, true);
+    expect((clean.missing || []).length === 0, 'still reported as missing after restoring it');
+
+    const final = disk();
+    final.cuts = kept;
+    await writeProject(final);
+    await settle();
+    return { recorded: snap.count, noticed: 1, restored: back.restored };
+  });
+
   await test('cuts: a model reading the transcript adds suggestions, unticked and reasoned', async () => {
     // A fake OpenAI-compatible endpoint, so the whole path is exercised with no key, no network
     // and no bill. What is being tested is the wiring and the guardrails, not the model.

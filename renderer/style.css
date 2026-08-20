@@ -619,3 +619,13 @@ select:focus { outline: none; border-color: #46506a; }
   background: color-mix(in oklab, var(--ink) 72%, transparent);
   border: 1px solid var(--chip-line); backdrop-filter: blur(6px);
 }
+
+/* ------------------------------------------------------- multi-selection */
+/* A second, quieter state than `.selected`: these are all coming along for the ride, but one of
+   them is still the one the inspector is talking about. */
+.clip.multi, .cap.multi {
+  outline: 1px solid color-mix(in oklab, var(--accent) 70%, transparent);
+  outline-offset: -1px;
+  box-shadow: inset 0 0 0 99px color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.cap.multi { background: color-mix(in oklab, var(--accent) 55%, var(--panel-2)); }

@@ -195,7 +195,7 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       appHasDone: [
         'built the graded master and the word-level transcript',
         'applied the template look (caption style, colours, fonts)',
-        'recorded any cuts, overlays and look choices the user made by hand',
+        'recorded any cuts, overlays and look choices the user made by hand, and marked them "manual": true',
       ],
       agentShouldDo: [
         'tighten the edit — dead air, fillers, stutters, weak takes',
@@ -222,6 +222,11 @@ export function buildBrief({ template, appVersion, templatesDir, enginePath }) {
       'A framing move HOLDS until the next one. Write the move back to full, or it never comes back.',
       'Preview a range before exporting: a full export of a long video takes minutes.',
       'The user may be editing at the same time. Re-read project.json before writing, and keep your changes additive.',
+      'Anything carrying "manual": true was done by hand by the user. Do NOT delete it, move it, or '
+        + 'overwrite its caption height or size. Work around it: it is a decision, not a suggestion. '
+        + 'If you believe one is wrong, say so and leave it alone.',
+      'The app records those in .cutright/handoff.json before handing you the project, and the '
+        + 'verifier compares against it — so a hand edit you drop is reported as an error, not missed.',
       'Run the verifier before you say you are finished. It is the difference between "done" and "rendered, watched, and wrong".',
     ],
   };

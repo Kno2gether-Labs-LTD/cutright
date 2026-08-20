@@ -35,7 +35,8 @@
     "check:library": "node scripts/check-library.mjs",
     "check:agents": "node scripts/check-agents.mjs",
     "check:preview": "node scripts/check-preview.mjs",
-    "check:cutplan": "node scripts/check-cutplan.mjs"
+    "check:cutplan": "node scripts/check-cutplan.mjs",
+    "check:guard": "node scripts/check-guard.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

@@ -35,6 +35,8 @@ jobs:
         run: node scripts/check-keys.mjs
       - name: MCP wiring (the key never lands in .mcp.json)
         run: node scripts/check-mcp.mjs
+      - name: Hand edits survive the agent
+        run: node scripts/check-guard.mjs
       - name: Cut planning (a model may suggest, never edit)
         run: node scripts/check-cutplan.mjs
       - name: Preview time mapping (the app and the engine agree)

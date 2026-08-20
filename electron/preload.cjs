@@ -170,6 +170,13 @@ contextBridge.exposeInMainWorld('editor', {
     softFillers: !!o.softFillers, ai: !!o.ai,
   }),
 
+  // --- protecting hand edits from the agent's rewrite ---
+  guard: {
+    snapshot: () => ipcRenderer.invoke('guard:snapshot'),
+    check: () => ipcRenderer.invoke('guard:check'),
+    restore: () => ipcRenderer.invoke('guard:restore'),
+  },
+
   // --- the endpoint that reads the transcript and suggests cuts ---
   llm: {
     status: () => ipcRenderer.invoke('llm:status'),
