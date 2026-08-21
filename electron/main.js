@@ -425,7 +425,7 @@ function openRecorder() {
   recWin.webContents.on('did-fail-load', (_e, code, desc) => log('recorder did-fail-load', code, desc));
   recWin.webContents.on('render-process-gone', (_e, d) => log('recorder gone', JSON.stringify(d)));
   recWin.loadFile(join(ROOT, 'renderer/recorder.html'));
-  recWin.on('closed', () => { recWin = null; });
+  recWin.on('closed', () => { recWin = null; closeOverlay(); });
   return recWin;
 }
 
@@ -443,7 +443,7 @@ let overlayWin = null;
 function openOverlay() {
   if (overlayWin && !overlayWin.isDestroyed()) return overlayWin;
   const d = screen.getPrimaryDisplay().bounds;
-  overlayWin = new BrowserWindow({
+  const w = new BrowserWindow({
     x: d.x, y: d.y, width: d.width, height: d.height,
     frame: false, transparent: true, hasShadow: false, resizable: false,
     skipTaskbar: true, focusable: false, fullscreenable: false,
@@ -454,30 +454,42 @@ function openOverlay() {
       backgroundThrottling: false,
     },
   });
-  // Above everything, including full-screen apps — you are recording those.
-  overlayWin.setAlwaysOnTop(true, 'screen-saver');
-  overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  overlayWin.loadFile(join(ROOT, 'renderer/overlay.html'));
-  overlayWin.on('closed', () => { overlayWin = null; });
-  return overlayWin;
+  overlayWin = w;
+  // Keep the controls and the count-in OUT of the recording. macOS honours this by refusing to
+  // share the window's surface with any capture — without it the pill sits in the corner of
+  // every take, which is exactly what it looked like.
+  try { w.setContentProtection(true); } catch {}
+  w.setAlwaysOnTop(true, 'screen-saver');
+  w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  w.loadFile(join(ROOT, 'renderer/overlay.html'));
+  // Only clear the reference if THIS window is still the current one. Without that check, a
+  // window closed a moment ago fires its `closed` event after a replacement has been created and
+  // nulls the reference to the replacement — leaving a pill on screen that nothing can update,
+  // move or close, and another one next time. That is exactly what happened.
+  w.on('closed', () => { if (overlayWin === w) overlayWin = null; });
+  return w;
 }
 
+// One window for the whole recording, switched between states. It used to be destroyed and
+// rebuilt between the count-in and the controls, which is what created the orphans.
 function overlayMode(mode, payload = {}) {
+  if (mode === 'hidden') {
+    if (overlayWin && !overlayWin.isDestroyed()) overlayWin.hide();
+    return;
+  }
   const w = openOverlay();
   if (!w || w.isDestroyed()) return;
   const d = screen.getPrimaryDisplay().bounds;
   if (mode === 'count') {
-    // Full screen and click-through: the number must not intercept a click meant for the app
+    // Full screen and click-through: the number must not swallow a click meant for the app
     // underneath, and it must not be something you can accidentally drag.
     w.setBounds({ x: d.x, y: d.y, width: d.width, height: d.height });
     w.setIgnoreMouseEvents(true);
     w.setFocusable(false);
   } else if (mode === 'controls') {
-    // Small, draggable, and clickable. Sized to the pill, parked out of the way on the left
-    // where a dock or a taskbar usually is not.
     w.setIgnoreMouseEvents(false);
     w.setFocusable(true);
-    w.setBounds({ x: d.x + 24, y: d.y + Math.round(d.height * 0.32), width: 76, height: 190 });
+    w.setBounds({ x: d.x + 26, y: d.y + Math.round(d.height * 0.3), width: 86, height: 236 });
   }
   const send = () => { try { w.webContents.send('overlay:mode', { mode, ...payload }); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
@@ -491,19 +503,38 @@ function overlayState(state) {
 }
 
 function closeOverlay() {
-  if (overlayWin && !overlayWin.isDestroyed()) { try { overlayWin.close(); } catch {} }
+  const w = overlayWin;
   overlayWin = null;
+  // destroy(), not close(): close is a request the page could in principle delay, and a control
+  // that outlives the recording it belongs to is worse than no control at all.
+  if (w && !w.isDestroyed()) { try { w.destroy(); } catch {} }
 }
 
 // While recording, the recorder window goes away entirely and the overlay is all you see.
 function setRecorderCompact(on) {
+  log('recorder compact', on ? 'on' : 'off', recWin ? (recWin.isDestroyed() ? 'destroyed' : 'ok') : 'no window');
   if (!recWin || recWin.isDestroyed()) return;
   if (on) {
     overlayMode('controls');
-    recWin.hide();
+    // NOT hide(). A hidden window stops being composited, and Chromium stops delivering
+    // MediaRecorder's data events with it — so the capture produced nothing, the four-second
+    // "this capture is empty" guard fired, and the recording aborted itself four seconds in.
+    // That was the bug: the recording did not fail, it was hidden to death.
+    //
+    // Moved off the side of the display instead: still a live, composited window as far as the
+    // renderer is concerned, and not in the shot.
+    // Still on screen and still composited — so Chromium keeps delivering MediaRecorder's data —
+    // but drawn at zero opacity and deaf to the mouse, so nobody sees it and nothing can be
+    // clicked by accident. Content protection keeps it out of the capture as well.
+    recWin.setOpacity(0);
+    recWin.setIgnoreMouseEvents(true);
+    try { recWin.setContentProtection(true); } catch {}
     win?.minimize();
   } else {
     closeOverlay();
+    recWin.setOpacity(1);
+    recWin.setIgnoreMouseEvents(false);
+    try { recWin.setContentProtection(false); } catch {}
     recWin.setAlwaysOnTop(false);
     recWin.setSize(460, 640);
     recWin.center();
@@ -596,8 +627,10 @@ function registerRecordingIpc() {
   // The count-in: a number over the whole screen, not a window in the shot. n <= 0 clears it.
   ipcMain.handle('rec:count', (_e, n) => {
     const num = Number(n) || 0;
+    // Hide, do not destroy: the controls are about to use this same window, and rebuilding it
+    // between the two is what left orphaned pills on screen.
     if (num > 0) overlayMode('count', { n: num });
-    else closeOverlay();
+    else overlayMode('hidden');
     return { ok: true };
   });
   ipcMain.on('rec:state', (_e, st) => overlayState({
@@ -1740,12 +1773,17 @@ app.whenReady().then(async () => {
   else if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l),
     // The recording overlay is its own window, so the smoke run needs a handle on it to be able
     // to look at what it draws.
-    overlay: { show: overlayMode, state: overlayState, close: closeOverlay, win: () => overlayWin } });
+    overlay: { show: overlayMode, state: overlayState, close: closeOverlay, win: () => overlayWin },
+    // Driving a REAL recording is the only way to find out whether recording works. Photographing
+    // the overlay proved only that the overlay draws.
+    recorder: { open: openRecorder, win: () => recWin, session: () => session } });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { for (const id of [...terms.keys()]) killTerm(id); for (const [, c] of jobs) { try { c.kill(); } catch {} } });
+// An always-on-top frameless window has no title bar and no dock icon of its own. If it ever
+// outlives the app that owns it, the only way out is Force Quit — so it goes first.
+app.on('before-quit', () => { try { closeOverlay(); } catch {} for (const id of [...terms.keys()]) killTerm(id); for (const [, c] of jobs) { try { c.kill(); } catch {} } });
 
 function buildMenu() {
   const mac = process.platform === 'darwin';

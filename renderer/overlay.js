@@ -20,6 +20,7 @@ O.onMode(({ mode, n }) => {
 O.onState(({ elapsed, paused }) => {
   if (elapsed != null) $('#time').textContent = fmt(elapsed);
   $('#controls').classList.toggle('paused', !!paused);
+  const l = $('#recLabel'); if (l) l.textContent = paused ? 'HELD' : 'REC';
   $('#btnPause').title = paused ? 'Carry on' : 'Pause (the clock stops too)';
 });
 

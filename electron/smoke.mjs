@@ -12,7 +12,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // strip ANSI/OSC so we can assert on terminal text
 const strip = (t) => String(t).replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
 
-export async function run({ win, app, settings, logToApp = () => {}, overlay = null }) {
+export async function run({ win, app, settings, logToApp = () => {}, overlay = null, recorder = null }) {
   const want = String(process.env.CVE_SMOKE).split(',').map((s) => s.trim());
   const out = process.env.CVE_SMOKE_OUT || '/tmp/cve-smoke';
   try { mkdirSync(dirname(out), { recursive: true }); } catch {}
@@ -248,6 +248,95 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
         await wait(3000);
         check('previewPlayback', await win.webContents.executeJavaScript(
           `(() => { const v=document.querySelector('#video'); return { duration: +(v.duration||0).toFixed(2), readyState: v.readyState, error: v.error?.code||null }; })()`));
+      }
+    }
+
+    // CVE_SMOKE_RECORD=1 drives an ACTUAL recording: open the recorder, pick a screen, press
+    // Start, let it run, then stop from the overlay exactly as a person would. Everything the
+    // user reported — a dead timer, a stop button that does nothing, a pill left on screen —
+    // lives in this path and nowhere else.
+    if (process.env.CVE_SMOKE_RECORD && recorder) {
+      const rw = recorder.open();
+      await wait(2500);
+
+      const evalRec = (js) => rw.webContents.executeJavaScript(js).catch((e) => ({ error: String(e).slice(0, 200) }));
+
+      const before = await evalRec(`(async () => {
+        const p = await window.rec.permissions();
+        const s = await window.rec.sources();
+        return { screen: p.screen, mic: p.microphone, denied: !!s.screenCaptureDenied,
+                 screens: (s.sources || []).filter(x => x.screen).length,
+                 windows: (s.sources || []).filter(x => !x.screen).length };
+      })()`);
+      check('record:before', before);
+
+      if (before?.denied || !before?.screens) {
+        check('record:result', { skipped: 'macOS is not handing over any displays — grant Screen Recording' });
+      } else {
+        // Pick the first screen and start, exactly as the buttons do.
+        const started = await evalRec(`(async () => {
+          const list = document.querySelectorAll('.rec-src');
+          for (const b of list) { if (/^Screen/.test(b.textContent)) { b.click(); break; } }
+          document.querySelector('#useCam').checked = false;
+          document.querySelector('#useMic').checked = false;
+          document.querySelector('#btnStart').click();
+          return true;
+        })()`);
+        check('record:started', { clicked: started === true });
+
+        // 3s count-in, then let it actually record.
+        await wait(9000);
+        const mid = await evalRec(`({
+          timer: document.querySelector('#timer')?.textContent,
+          hidden: document.hidden,
+          bar: !document.querySelector('#bar')?.hidden,
+          setup: !document.querySelector('#setup')?.hidden,
+          review: !document.querySelector('#review')?.hidden,
+          recorders: (window.__recDebug?.recorders ?? null),
+          captured: (window.__recDebug?.captured ?? null),
+          note: document.querySelector('#recNote')?.textContent || null,
+        })`);
+        const ow = overlay?.win?.();
+        check('record:while-running', { ...mid,
+          overlayOpen: !!(ow && !ow.isDestroyed()),
+          overlayBounds: ow && !ow.isDestroyed() ? ow.getBounds() : null,
+          recorderVisible: rw.isVisible(), recorderBounds: rw.getBounds() });
+
+        // Stop the way the pill does: through main, not by calling the page directly.
+        const { ipcMain: _im } = await import('electron');
+        rw.webContents.send('rec:remote', 'stop');
+        await wait(6000);
+        const after = await evalRec(`({ bar: !document.querySelector('#bar')?.hidden,
+                                        review: !document.querySelector('#review')?.hidden,
+                                        captured: (window.__recDebug?.captured ?? null) })`);
+        const ow2 = overlay?.win?.();
+        // The only answer that counts: is there a file, and does it have pictures in it?
+        // The session object is cleared once a take finishes, so ask the folder the recordings
+        // actually go to for its newest entry.
+        let file = null;
+        try {
+          const { homedir } = await import('node:os');
+          const { readdirSync } = await import('node:fs');
+          const root = join(homedir(), 'Movies', 'Cutright');
+          const dirs = readdirSync(root).map((n) => join(root, n))
+            .filter((d) => existsSync(join(d, 'recording')))
+            .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+          const f = dirs[0] ? join(dirs[0], 'recording', 'screen.mp4') : null;
+          file = f && existsSync(f) ? { path: f, bytes: statSync(f).size } : { path: f, bytes: 0 };
+        } catch (e) { file = { error: e.message }; }
+        // Assert, do not merely report. A recording that produces a zero-byte file is exactly
+        // what shipped: the take "succeeded", the folder appeared, and the video was empty.
+        const bytes = file?.bytes || 0;
+        const okRecording = bytes > 50_000 && after?.review === true && !after?.bar;
+        check('record:after-stop', { ...after, overlayStillOpen: !!(ow2 && !ow2.isDestroyed()),
+                                     file, ok: okRecording });
+        if (!okRecording) {
+          check('record:FAILED', {
+            why: bytes === 0 ? 'the capture wrote a zero-byte file — MediaRecorder delivered nothing'
+               : bytes <= 50_000 ? `the capture wrote only ${bytes} bytes`
+               : 'the recorder did not reach the review step',
+          });
+        }
       }
     }
 

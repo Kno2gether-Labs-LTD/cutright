@@ -167,6 +167,10 @@ async function start() {
 }
 
 let captured = 0;
+// A window onto what the recorder thinks is happening. Without this a failing recording is a
+// black box: the page looks the same whether MediaRecorder is running or quietly dead.
+window.__recDebug = { get recorders() { return recorders.length; }, get captured() { return captured; },
+                      get paused() { return paused; }, get elapsed() { return elapsed; } };
 
 function makeRecorder(stream, track, bitrate) {
   const rec = new MediaRecorder(stream, { mimeType: 'video/mp4;codecs=avc1', videoBitsPerSecond: bitrate });
