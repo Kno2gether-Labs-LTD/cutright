@@ -16,7 +16,7 @@ thing you will open in the morning.
 | Automated tests inside the app | **73 run · 72 passed · 1 skipped · 0 failed** |
 | Separate engineering checks | **20 run · 20 passed** (`npm run check:all`) |
 | End-to-end on your real recording | **passed** — rendered, watched, measured |
-| Bugs found while testing | **8**, all fixed (details at the bottom) |
+| Bugs found while testing | **10**, all fixed (details at the bottom) |
 
 The single skipped test needs a real human voice to transcribe. It cannot run without a
 microphone recording, so it is skipped rather than faked.
@@ -141,7 +141,17 @@ reused throughout, and it is destroyed when the recorder closes or the app quits
 Confirmed by pulling a frame out of a take and finding the pill in the corner. Both the controls
 and the count-in are now excluded from screen capture, confirmed the same way.
 
-**8. A warning that could never fire.**
+**8. Stop could hang forever.**
+Finishing a take waited for the recorder to confirm it had stopped — with no time limit. If it
+was already stopped, or wedged, that confirmation never came, so the whole of finishing waited
+behind it: the bar stayed up, the controls never closed, and **Stop looked like it did nothing**.
+It now waits three seconds and carries on regardless; whatever was captured is already on disk.
+
+**9. The controls sat on a grey slab.**
+The recorder window is kept invisible during a take, but a window at zero opacity still casts its
+macOS shadow — which is what you could see behind the pill. The shadow is now turned off with it.
+
+**10. A warning that could never fire.**
 The recorder is supposed to warn you when a build will lose your Screen Recording permission on
 the next update. It used `require`, which does not exist in this part of the app — and the caller
 caught the error and fell back to "everything is fine". So the warning had never once appeared,

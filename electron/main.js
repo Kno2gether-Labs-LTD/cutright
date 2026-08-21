@@ -489,7 +489,7 @@ function overlayMode(mode, payload = {}) {
   } else if (mode === 'controls') {
     w.setIgnoreMouseEvents(false);
     w.setFocusable(true);
-    w.setBounds({ x: d.x + 26, y: d.y + Math.round(d.height * 0.3), width: 86, height: 236 });
+    w.setBounds({ x: d.x + 26, y: d.y + Math.round(d.height * 0.3), width: 92, height: 214 });
   }
   const send = () => { try { w.webContents.send('overlay:mode', { mode, ...payload }); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
@@ -528,12 +528,17 @@ function setRecorderCompact(on) {
     // clicked by accident. Content protection keeps it out of the capture as well.
     recWin.setOpacity(0);
     recWin.setIgnoreMouseEvents(true);
+    // A window at zero opacity still casts its shadow, which macOS draws as a soft grey slab —
+    // the "something in the background" behind the controls. The window has to be invisible,
+    // not merely transparent.
+    try { recWin.setHasShadow(false); } catch {}
     try { recWin.setContentProtection(true); } catch {}
     win?.minimize();
   } else {
     closeOverlay();
     recWin.setOpacity(1);
     recWin.setIgnoreMouseEvents(false);
+    try { recWin.setHasShadow(true); } catch {}
     try { recWin.setContentProtection(false); } catch {}
     recWin.setAlwaysOnTop(false);
     recWin.setSize(460, 640);

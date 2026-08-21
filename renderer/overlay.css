@@ -1,12 +1,13 @@
 /* The recording overlay: no window, no chrome, nothing but what it draws.
-   Everything is transparent by default — during the count-in the window IS the whole screen, so
-   any opaque pixel would black out the display it is counting over. */
+   Transparent by default — during the count-in the window IS the whole screen, so a single
+   opaque pixel would black out the display it is counting over. */
 :root {
   --bone: #f1efe7;
+  --dim: #8e8b82;
   --coral: #e5533d;
   --amber: #f0b03c;
-  --ink: rgba(13, 13, 11, .86);
-  --hair: rgba(255, 255, 255, .10);
+  --slab: rgba(16, 16, 14, .90);
+  --hair: rgba(241, 239, 231, .10);
 }
 * { box-sizing: border-box; margin: 0; }
 html, body { width: 100%; height: 100%; background: transparent; overflow: hidden;
@@ -17,69 +18,78 @@ html, body { width: 100%; height: 100%; background: transparent; overflow: hidde
 .count { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
 .count span {
   font-family: 'Anton', 'Archivo', sans-serif; font-size: 210px; line-height: 1; color: #fff;
-  /* Readable over anything: a halo rather than a panel, so the screen stays visible. */
   text-shadow: 0 0 40px rgba(0,0,0,.85), 0 0 120px rgba(0,0,0,.7), 0 8px 30px rgba(0,0,0,.6);
   animation: pop .9s cubic-bezier(.2,.9,.2,1);
 }
 @keyframes pop { from { transform: scale(1.5); opacity: 0 } 40% { opacity: 1 } to { transform: scale(1); opacity: .96 } }
 
 /* ---- the controls ---- */
-/* Vertical, because a horizontal bar across the bottom is where a dock, a taskbar and a
-   browser's status text already are. The materials are the app's: near-black glass, a hairline
-   top edge, the brand coral for the one destructive action and amber for everything live. */
+/* Not a capsule of circular buttons — that shape belongs to somebody else. This is the app's
+   own language: a slab, square tiles, Anton for the numerals, and the film-sprocket edge from
+   the mark. The clock is the hero, because while you are recording it is the only fact that
+   changes. */
 .pill {
-  position: fixed; left: 6px; top: 6px; width: 72px;
-  display: flex; flex-direction: column; align-items: center; gap: 7px;
-  padding: 9px 8px 7px; border-radius: 24px;
-  background: linear-gradient(180deg, rgba(30,30,26,.9), var(--ink));
+  position: fixed; left: 5px; top: 5px; width: 82px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 9px 7px 7px; border-radius: 16px;
+  background: linear-gradient(178deg, rgba(34,33,29,.94), var(--slab) 46%);
   border: 1px solid var(--hair);
-  box-shadow: 0 18px 44px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.09);
-  backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: 0 16px 40px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(16px) saturate(115%);
   -webkit-app-region: drag;
+  overflow: hidden;
+}
+/* The sprocket rail — the film-strip motif from the logo, as a quiet edge rather than an icon. */
+.pill::before {
+  content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px;
+  background-image: repeating-linear-gradient(to bottom,
+    color-mix(in oklab, var(--amber) 70%, transparent) 0 4px, transparent 4px 9px);
+  opacity: .5;
 }
 
-/* A live indicator that reads at a glance from across the room. */
-.rec { display: flex; align-items: center; gap: 5px; padding: 1px 0 2px; }
-.rec .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--coral);
+/* live marker */
+.rec { display: flex; align-items: center; gap: 5px; height: 12px; }
+.rec .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--coral);
   box-shadow: 0 0 0 0 rgba(229,83,61,.6); animation: beat 2s ease-out infinite; }
-.rec .label { font-family: 'Anton', sans-serif; font-size: 9.5px; letter-spacing: 1.2px;
-  color: rgba(241,239,231,.72); }
+.rec .label { font-family: 'Anton', sans-serif; font-size: 9px; letter-spacing: 1.4px; color: var(--dim); }
 .pill.paused .rec .dot { background: var(--amber); animation: none; }
-.pill.paused .rec .label::after { content: 'D'; }
 @keyframes beat {
-  0% { box-shadow: 0 0 0 0 rgba(229,83,61,.55) }
-  70% { box-shadow: 0 0 0 7px rgba(229,83,61,0) }
+  0% { box-shadow: 0 0 0 0 rgba(229,83,61,.5) } 70% { box-shadow: 0 0 0 6px rgba(229,83,61,0) }
   100% { box-shadow: 0 0 0 0 rgba(229,83,61,0) }
 }
-@media (prefers-reduced-motion: reduce) { .rec .dot { animation: none } .count span { animation: none } }
+@media (prefers-reduced-motion: reduce) { .rec .dot, .count span { animation: none } }
 
-.pbtn {
-  -webkit-app-region: no-drag;
-  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,.07); border: 1px solid var(--hair);
-  color: var(--bone); font-size: 14px; padding: 0;
-  transition: background .14s ease, border-color .14s ease, transform .08s ease;
-}
-.pbtn:hover { background: rgba(240,176,60,.16); border-color: rgba(240,176,60,.4); }
-.pbtn:active { transform: scale(.93); }
-.pbtn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-.pbtn.small { width: 28px; height: 28px; font-size: 12px; }
-
-/* Stop is the one irreversible thing here, so it is the only thing wearing the brand red. */
-.pbtn.stop { background: var(--coral); border-color: rgba(255,255,255,.16);
-  box-shadow: 0 4px 14px rgba(229,83,61,.4); }
-.pbtn.stop:hover { background: #f2634c; border-color: rgba(255,255,255,.28); }
-.sq { width: 11px; height: 11px; border-radius: 2.5px; background: #fff; }
-.bars { width: 11px; height: 12px; border-left: 3.5px solid var(--bone); border-right: 3.5px solid var(--bone); }
-.pill.paused .bars { width: 0; height: 0; border: 6.5px solid transparent;
-  border-left: 10px solid var(--amber); margin-left: 3px; }
-
+/* The clock leads. Anton, because it is the app's voice, and tabular so it does not jitter. */
 .time {
   -webkit-app-region: no-drag;
-  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px;
-  letter-spacing: .2px; padding: 1px 0; font-variant-numeric: tabular-nums;
+  font-family: 'Anton', 'Archivo', sans-serif; font-size: 21px; line-height: 1;
+  letter-spacing: .5px; font-variant-numeric: tabular-nums; color: var(--bone);
+  padding: 1px 0 3px;
 }
 .pill.paused .time { color: var(--amber); }
-.grip { width: 20px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.18); margin-top: 1px; }
-.pill:hover .grip { background: rgba(240,176,60,.5); }
+
+/* Square tiles, not circles. */
+.pbtn {
+  -webkit-app-region: no-drag;
+  width: 56px; height: 34px; border-radius: 10px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(241,239,231,.07); border: 1px solid var(--hair);
+  color: var(--bone); font-size: 11px; padding: 0;
+  transition: background .14s ease, border-color .14s ease, transform .08s ease;
+}
+.pbtn:hover { background: rgba(240,176,60,.18); border-color: color-mix(in oklab, var(--amber) 55%, transparent); }
+.pbtn:active { transform: translateY(.5px) scale(.985); }
+.pbtn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.pbtn .cap { font-family: 'Anton', sans-serif; font-size: 10px; letter-spacing: 1px; }
+
+/* Stop is the only irreversible control here, so it is the only one wearing the brand red. */
+.pbtn.stop { background: var(--coral); border-color: transparent; color: #fff;
+  box-shadow: 0 6px 16px rgba(229,83,61,.34); }
+.pbtn.stop:hover { background: #f2634c; }
+.sq { width: 10px; height: 10px; border-radius: 2px; background: #fff; }
+.bars { width: 10px; height: 11px; border-left: 3px solid var(--bone); border-right: 3px solid var(--bone); }
+.pill.paused .bars { width: 0; height: 0; border: 6px solid transparent; border-left: 9px solid var(--amber); margin-left: 3px; }
+.pbtn.small { width: 56px; height: 26px; border-radius: 8px; font-size: 10px; }
+
+.grip { width: 18px; height: 3px; border-radius: 2px; background: rgba(241,239,231,.16); margin-top: 1px; }
+.pill:hover .grip { background: color-mix(in oklab, var(--amber) 60%, transparent); }

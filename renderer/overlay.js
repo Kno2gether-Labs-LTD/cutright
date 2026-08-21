@@ -21,6 +21,7 @@ O.onState(({ elapsed, paused }) => {
   if (elapsed != null) $('#time').textContent = fmt(elapsed);
   $('#controls').classList.toggle('paused', !!paused);
   const l = $('#recLabel'); if (l) l.textContent = paused ? 'HELD' : 'REC';
+  const c = $('#pauseCap'); if (c) c.textContent = paused ? 'GO' : 'HOLD';
   $('#btnPause').title = paused ? 'Carry on' : 'Pause (the clock stops too)';
 });
 
@@ -30,8 +31,8 @@ $('#btnMark').onclick = () => {
   O.action('mark');
   // A mark is invisible by nature — say it landed.
   const b = $('#btnMark');
-  b.textContent = '✓';
-  setTimeout(() => { b.textContent = '★'; }, 700);
+  const cap = b.querySelector('.cap');
+  if (cap) { cap.textContent = 'SET'; setTimeout(() => { cap.textContent = 'MARK'; }, 800); }
 };
 
 function fmt(s) {

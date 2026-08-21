@@ -270,13 +270,43 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
       })()`);
       check('record:before', before);
 
-      if (before?.denied || !before?.screens) {
-        check('record:result', { skipped: 'macOS is not handing over any displays — grant Screen Recording' });
-      } else {
+      // No displays available? Test the lifecycle anyway with a synthetic stream. The OS capture
+      // is the one thing that cannot be checked without permission; everything else can, and
+      // everything else is where the bugs were.
+      const synthetic = !!(before?.denied || !before?.screens);
+      if (synthetic) {
+        check('record:mode', { synthetic: true,
+          why: 'macOS is not handing over displays — exercising the recorder with a canvas stream' });
+        await evalRec(`(() => {
+          window.__recTestStream = () => {
+            const c = document.createElement('canvas');
+            c.width = 640; c.height = 360;
+            // A detached canvas is never painted, so captureStream yields no frames. It has to
+            // be in the document — parked out of sight rather than hidden, since display:none
+            // would stop it painting too.
+            c.style.cssText = 'position:fixed;left:-9999px;top:0;';
+            document.body.appendChild(c);
+            const ctx = c.getContext('2d');
+            let i = 0;
+            setInterval(() => {
+              i++;
+              ctx.fillStyle = 'hsl(' + ((i * 7) % 360) + ',70%,45%)';
+              ctx.fillRect(0, 0, 640, 360);
+              ctx.fillStyle = '#fff'; ctx.font = '48px sans-serif';
+              ctx.fillText('frame ' + i, 40, 200);
+            }, 100);
+            return c.captureStream(30);
+          };
+          // A synthetic run must not need a real source picked.
+          return true;
+        })()`);
+      }
+      {
         // Pick the first screen and start, exactly as the buttons do.
+        const startedAt = Date.now() - 1000;
         const started = await evalRec(`(async () => {
           const list = document.querySelectorAll('.rec-src');
-          for (const b of list) { if (/^Screen/.test(b.textContent)) { b.click(); break; } }
+          for (const b of list) { if (${synthetic ? 'true' : '/^Screen/.test(b.textContent)'}) { b.click(); break; } }
           document.querySelector('#useCam').checked = false;
           document.querySelector('#useMic').checked = false;
           document.querySelector('#btnStart').click();
@@ -295,12 +325,16 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
           recorders: (window.__recDebug?.recorders ?? null),
           captured: (window.__recDebug?.captured ?? null),
           note: document.querySelector('#recNote')?.textContent || null,
+          warn: document.querySelector('#permWarn')?.textContent || null,
+          startDisabled: document.querySelector('#btnStart')?.disabled,
+          chosen: document.querySelectorAll('.rec-src.sel').length,
         })`);
         const ow = overlay?.win?.();
         check('record:while-running', { ...mid,
           overlayOpen: !!(ow && !ow.isDestroyed()),
           overlayBounds: ow && !ow.isDestroyed() ? ow.getBounds() : null,
-          recorderVisible: rw.isVisible(), recorderBounds: rw.getBounds() });
+          recorderVisible: rw.isVisible(), recorderOpacity: rw.getOpacity(),
+          recorderBounds: rw.getBounds() });
 
         // Stop the way the pill does: through main, not by calling the page directly.
         const { ipcMain: _im } = await import('electron');
@@ -325,8 +359,10 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
           const { homedir } = await import('node:os');
           const { readdirSync } = await import('node:fs');
           const root = join(homedir(), 'Movies', 'Cutright');
+          const since = startedAt;
           const dirs = readdirSync(root).map((n) => join(root, n))
             .filter((d) => existsSync(join(d, 'recording')))
+            .filter((d) => { try { return statSync(d).mtimeMs >= since; } catch { return false; } })
             .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
           const f = dirs[0] ? join(dirs[0], 'recording', 'screen.mp4') : null;
           file = f && existsSync(f) ? { path: f, bytes: statSync(f).size } : { path: f, bytes: 0 };
@@ -334,12 +370,19 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
         // Assert, do not merely report. A recording that produces a zero-byte file is exactly
         // what shipped: the take "succeeded", the folder appeared, and the video was empty.
         const bytes = file?.bytes || 0;
-        const okRecording = bytes > 50_000 && after?.review === true && !after?.bar;
+        // A synthetic run proves the lifecycle, not the capture: MediaRecorder's MP4 path does not
+        // accept a canvas stream, so "no bytes" there says nothing about the app. Only a real
+        // capture is allowed to fail this.
+        const okRecording = synthetic
+          ? (after?.review === true && !after?.bar && !after?.overlayStillOpen)
+          : (bytes > 50_000 && after?.review === true && !after?.bar);
         check('record:after-stop', { ...after, overlayStillOpen: !!(ow2 && !ow2.isDestroyed()),
                                      file, ok: okRecording });
         if (!okRecording) {
           check('record:FAILED', {
-            why: bytes === 0 ? 'the capture wrote a zero-byte file — MediaRecorder delivered nothing'
+            synthetic,
+            why: synthetic ? 'the recorder did not return to review after stop'
+               : bytes === 0 ? 'the capture wrote a zero-byte file — MediaRecorder delivered nothing'
                : bytes <= 50_000 ? `the capture wrote only ${bytes} bytes`
                : 'the recorder did not reach the review step',
           });

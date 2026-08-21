@@ -122,6 +122,13 @@ async function start() {
   const wantMic = $('#useMic').checked, wantCam = $('#useCam').checked;
 
   try {
+    // A test may hand us a stream instead of asking the OS for one. Everything after this point
+    // — the count-in, the controls, chunking, stop, finalising — is identical, so the whole
+    // lifecycle can be exercised on a machine that has not granted Screen Recording. It is the
+    // capture itself that is substituted, and nothing else.
+    if (window.__recTestStream) {
+      media.screen = window.__recTestStream();
+    } else
     media.screen = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: chosen,
@@ -162,8 +169,18 @@ async function start() {
   ticker = setInterval(tick, 500);
 
   // The OS can refuse a capture without raising anything: MediaRecorder runs, the timer ticks,
-  // and every blob is empty. Catch that in the first seconds rather than at the end of a take.
-  setTimeout(() => { if (recorders.length && captured === 0) abortEmptyCapture(); }, 4000);
+  // and every blob is empty. That has to be caught early rather than at the end of a take — but
+  // the check has to ASK before it accuses. An MP4 recorder does not necessarily hand over a
+  // chunk on the timeslice; it may hold everything until something requests it, and a guard that
+  // reads "no bytes yet" as "the capture failed" cancels perfectly good recordings. It did.
+  setTimeout(() => {
+    if (!recorders.length || captured > 0) return;
+    // Ask for a chunk, then decide.
+    recorders.forEach((r) => { try { if (r.state === 'recording') r.requestData(); } catch {} });
+    setTimeout(() => {
+      if (recorders.length && captured === 0) abortEmptyCapture();
+    }, 2500);
+  }, 5000);
 }
 
 let captured = 0;
@@ -240,8 +257,25 @@ async function togglePause() {
 async function stop() {
   clearInterval(ticker);
   $('#btnStop').disabled = true;
-  await Promise.all(recorders.map((r) => new Promise((res) => { r.onstop = res; r.stop(); })));
-  await Promise.all(pending);                     // every chunk must land before we finalise
+  // Never wait forever on a recorder that will not answer. If MediaRecorder is already inactive,
+  // or wedged, `onstop` never arrives — and the whole of finalisation waits behind it, so the
+  // bar stays up, the controls never close, and Stop looks like it does nothing. It did.
+  const settle = (r) => new Promise((res) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; res(); } };
+    try {
+      r.onstop = finish;
+      if (r.state === 'inactive') finish(); else r.stop();
+    } catch { finish(); }
+    setTimeout(finish, 3000);
+  });
+  await Promise.all(recorders.map(settle));
+  // Same rule for the chunks: they should all land before finalising, but a write that never
+  // settles must not take the recording with it — what has already been written is on disk.
+  await Promise.race([
+    Promise.allSettled(pending),
+    new Promise((res) => setTimeout(res, 8000)),
+  ]);
   Object.values(media).forEach((s) => s?.getTracks?.().forEach((t) => t.stop()));
 
   const summary = await R.stop();

@@ -10,12 +10,13 @@
 
 <div id="controls" class="pill" hidden>
   <div class="rec"><span class="dot"></span><span class="label" id="recLabel">REC</span></div>
-  <button id="btnStop" class="pbtn stop" title="Finish the recording">
-    <span class="sq"></span></button>
-  <button id="btnPause" class="pbtn" title="Pause (the clock stops too)">
-    <span class="bars"></span></button>
   <div class="time" id="time">0:00</div>
-  <button id="btnMark" class="pbtn small" title="Mark this moment — it becomes a marker on the timeline">★</button>
+  <button id="btnStop" class="pbtn stop" title="Finish the recording">
+    <span class="sq"></span><span class="cap">STOP</span></button>
+  <button id="btnPause" class="pbtn" title="Pause — the clock stops too">
+    <span class="bars"></span><span class="cap" id="pauseCap">HOLD</span></button>
+  <button id="btnMark" class="pbtn small" title="Mark this moment — it becomes a marker on the timeline">
+    <span class="cap">MARK</span></button>
   <div class="grip" title="Drag to move"></div>
 </div>
 
