@@ -174,6 +174,11 @@ contextBridge.exposeInMainWorld('editor', {
     softFillers: !!o.softFillers, ai: !!o.ai,
   }),
 
+  // --- what am I running, and is there a newer one ---
+  about: () => ipcRenderer.invoke('app:about'),
+  checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  onShowAbout: (cb) => { if (typeof cb === 'function') ipcRenderer.on('about:show', (_e, o) => cb(o || {})); },
+
   // --- the edit ledger ---
   history: {
     list: () => ipcRenderer.invoke('history:list'),

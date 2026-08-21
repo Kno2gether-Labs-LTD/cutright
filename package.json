@@ -40,8 +40,11 @@
     "check:history": "node scripts/check-history.mjs",
     "check:clips": "node scripts/check-clips.mjs",
     "check:media": "node scripts/check-media-sources.mjs",
-    "check:all": "npm run --silent check:agents && npm run --silent check:audio && npm run --silent check:clips && npm run --silent check:cutplan && npm run --silent check:framing && npm run --silent check:guard && npm run --silent check:history && npm run --silent check:keys && npm run --silent check:layers && npm run --silent check:library && npm run --silent check:mcp && npm run --silent check:media && npm run --silent check:pacing && npm run --silent check:preview && npm run --silent check:signing && npm run --silent check:verify && npm run --silent check:zoom",
-    "test": "npm run --silent check:all && npm run --silent smoke"
+    "check:all": "npm run --silent check:agents && npm run --silent check:audio && npm run --silent check:clips && npm run --silent check:cutplan && npm run --silent check:esm && npm run --silent check:framing && npm run --silent check:gatekeeper && npm run --silent check:guard && npm run --silent check:history && npm run --silent check:keys && npm run --silent check:layers && npm run --silent check:library && npm run --silent check:mcp && npm run --silent check:media && npm run --silent check:pacing && npm run --silent check:preview && npm run --silent check:signing && npm run --silent check:verify && npm run --silent check:version && npm run --silent check:zoom",
+    "test": "npm run --silent check:all && npm run --silent smoke",
+    "check:version": "node scripts/check-version.mjs",
+    "check:esm": "node scripts/check-esm.mjs",
+    "check:gatekeeper": "node scripts/check-gatekeeper.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

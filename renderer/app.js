@@ -397,6 +397,7 @@ function initTimelineInteraction() {
   $('#btnStartAgent').onclick = () => startAgentEdit();
   $('#btnAgentBrief').onclick = () => showAgentBrief();
   $('#btnHistory').onclick = () => showHistory();
+  E.onShowAbout?.((o) => { hideHome(); showAbout(o); });
   // The list is live: when the agent writes, the history grows underneath you.
   E.history.onChanged(() => { if ($('#selBadge').textContent === 'history') showHistory(); });
   $('#btnMedia').onclick = () => showMediaPanel();
@@ -1316,6 +1317,7 @@ async function showHome() {
       : 'Missing: ' + env.missing.map((m) => m.tool).join(', ');
   };
   $('#homeLogs').onclick = (ev) => { ev.preventDefault(); E.openLogs(); };
+  $('#homeAbout').onclick = (ev) => { ev.preventDefault(); hideHome(); showAbout(); };
   $('#homeResetLayout').onclick = (ev) => {
     ev.preventDefault();
     window.Panels.resetAll();
@@ -3337,4 +3339,76 @@ async function showMediaPanel() {
   box.appendChild(list);
   box.appendChild(hint('Cutright downloads nothing and hosts nothing. Take what you need, drop it in '
     + 'the project folder, and add it to the timeline.'));
+}
+
+// ---------------------------------------------------------------- about, and updates
+// Two questions nobody should have to guess at: what am I running, and is there a newer one.
+// The first is answered from the build itself — including whether macOS considers it signed and
+// notarised, because "is this the real thing" is a fair question about a video editor that asks
+// for your screen. The second is answered honestly: it looks, and it tells you. Nothing installs
+// itself; see docs/UPDATES.md.
+async function showAbout(opts = {}) {
+  const a = await E.about();
+  const box = $('#inspector'); box.innerHTML = '';
+  $('#selBadge').textContent = 'about';
+
+  const h = document.createElement('h3');
+  const title = document.createElement('div'); title.className = 'title';
+  const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = 'about';
+  const when = document.createElement('span'); when.textContent = `version ${a.version}`;
+  title.append(kind, when);
+  h.append(title, btn('Close', () => renderInspector()));
+  box.appendChild(h);
+
+  const big = document.createElement('div'); big.className = 'about-hero';
+  big.innerHTML = `<div class="about-name">Cutright</div>
+    <div class="about-ver">${a.version}${a.packaged ? '' : ' · running from source'}</div>
+    <div class="about-by">by Viddescriptor</div>`;
+  box.appendChild(big);
+
+  const rows = [
+    ['Signed by', a.identity || (a.packaged ? 'not signed' : 'n/a — running from source')],
+    ['Checked by Apple', a.gatekeeper || (a.packaged ? 'unknown' : 'n/a — running from source')],
+    ['Runs on', `Electron ${a.electron} · Chromium ${a.chrome} · Node ${a.node}`],
+    ['This machine', `${a.platform} ${a.arch}`],
+  ];
+  const list = document.createElement('div'); list.className = 'about-rows';
+  rows.forEach(([k, v]) => {
+    const r = document.createElement('div'); r.className = 'about-row';
+    const kk = document.createElement('span'); kk.className = 'ak'; kk.textContent = k;
+    const vv = document.createElement('span'); vv.className = 'av'; vv.textContent = v;
+    r.append(kk, vv); list.appendChild(r);
+  });
+  box.appendChild(list);
+
+  const status = document.createElement('p'); status.className = 'hint'; status.id = 'updStatus';
+  status.textContent = 'Updates are not installed automatically. Checking only looks.';
+  box.appendChild(status);
+
+  box.appendChild(btnRow(
+    btn('Check for updates', async () => {
+      const s = $('#updStatus');
+      s.textContent = 'Looking…';
+      const r = await E.checkUpdate();
+      if (!r?.ok) { s.textContent = 'Could not check: ' + (r?.error || 'unknown'); return; }
+      if (r.none) { s.textContent = `You are on ${r.current}. There is no published release yet — `
+        + 'the first one is still a draft.'; return; }
+      if (!r.newer) { s.textContent = `You are on ${r.current}, which is the latest.`; return; }
+      s.textContent = `${r.latest} is available — you are on ${r.current}.`;
+      const row = btnRow(btn(`Open ${r.latest}`, () => E.openExternal(r.url), 'primary'));
+      s.after(row);
+    }, 'primary'),
+    btn('Open logs', () => E.openLogs()),
+    btn('Check environment', async () => {
+      const env = await E.checkEnvironment();
+      $('#updStatus').textContent = env.ok ? 'ffmpeg and Python are both present.'
+        : 'Missing: ' + env.missing.map((m) => m.tool).join(', ');
+    }),
+  ));
+
+  if (opts.check) $('#inspector button')?.blur();
+  if (opts.check) {
+    const b = [...box.querySelectorAll('button')].find((x) => /Check for updates/.test(x.textContent));
+    b?.click();
+  }
 }

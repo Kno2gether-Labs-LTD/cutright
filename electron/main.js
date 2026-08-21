@@ -12,7 +12,7 @@ import { makeKeyStore } from './keys.mjs';
 import * as mcp from './mcp.mjs';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeAgentFiles } from './brief.mjs';
 import { RecordingSession, newRecordingFolder, defaultRecordingsDir, proposeZooms } from './recording.mjs';
 import { listLibrary } from './library.mjs';
@@ -22,6 +22,8 @@ import * as llm from './llm.mjs';
 import { snapshot as guardSnapshot, diff as guardDiff, restore as guardRestore } from './guard.mjs';
 import { diff as historyDiff, invert as historyInvert, apply as historyApply } from './history.mjs';
 import * as media from './media-sources.mjs';
+import { isNewer } from './version.mjs';
+import { parseSpctl } from './gatekeeper.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
@@ -529,8 +531,7 @@ function hasStableIdentity() {
   if (stableIdentity !== null) return stableIdentity;
   try {
     const bundle = app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '');
-    const r = require('node:child_process').spawnSync(
-      'codesign', ['-d', '-r-', bundle], { encoding: 'utf8', timeout: 5000 });
+    const r = spawnSync('codesign', ['-d', '-r-', bundle], { encoding: 'utf8', timeout: 5000 });
     const out = (r.stdout || '') + (r.stderr || '');
     const line = out.split('\n').find((l) => l.includes('designated =>'));
     // No answer at all is not evidence of a problem — do not cry wolf.
@@ -1255,6 +1256,73 @@ function registerHistoryIpc() {
   });
 }
 
+// ---------------------------------------------------------------- about, and updates
+// Two questions a user should never have to guess at: what am I running, and is there a newer
+// one? The first is knowable for certain; the second is answered honestly rather than
+// automatically — see docs/UPDATES.md for why nothing installs itself yet.
+let buildFactsCache = null;
+function buildFacts() {
+  if (buildFactsCache) return buildFactsCache;
+  const bundle = process.platform === 'darwin' && app.isPackaged
+    ? app.getPath('exe').replace(/\/Contents\/MacOS\/[^/]+$/, '') : null;
+  let identity = null, notarized = null, gate = null;
+  if (bundle) {
+    try {
+      const r = spawnSync('codesign', ['-dv', '--verbose=2', bundle], { encoding: 'utf8', timeout: 5000 });
+      const out = (r.stdout || '') + (r.stderr || '');
+      identity = (out.split('\n').find((l) => l.startsWith('Authority=')) || '').replace('Authority=', '') || null;
+    } catch {}
+    try {
+      // Gatekeeper's own verdict is the honest source. Reading it is fussier than it looks: an
+      // un-notarised build says "source=Unnotarized Developer ID", so a naive match for
+      // "notarized" finds it inside "Unnotarized" and reports a REJECTED build as fine. That
+      // shipped once; gatekeeper.mjs exists so it cannot again.
+      const r = spawnSync('spctl', ['-a', '-vv', bundle], { encoding: 'utf8', timeout: 8000 });
+      gate = parseSpctl((r.stdout || '') + (r.stderr || ''));
+      notarized = gate.notarized;
+    } catch {}
+  }
+  buildFactsCache = {
+    name: app.getName(), version: app.getVersion(),
+    packaged: app.isPackaged, platform: process.platform, arch: process.arch,
+    electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node,
+    identity, notarized, gatekeeper: gate ? gate.plain : null, accepted: gate ? gate.accepted : null,
+    engine: settings.engine || null,
+    settingsFile: settingsPath,
+    logFile: (() => { try { return logPath; } catch { return null; } })(),
+  };
+  return buildFactsCache;
+}
+
+const UPDATE_FEED = 'https://api.github.com/repos/Kno2gether-Labs-LTD/cutright/releases/latest';
+
+async function checkForUpdate() {
+  const current = app.getVersion();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(UPDATE_FEED, {
+      signal: ctl.signal,
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': `Cutright/${current}` },
+    });
+    // 404 is the normal answer while every release is still a draft — say that plainly rather
+    // than reporting a failure the user cannot act on.
+    if (r.status === 404) return { ok: true, current, latest: null, newer: false, none: true };
+    if (!r.ok) return { ok: false, current, error: `the update feed answered ${r.status}` };
+    const j = await r.json();
+    const latest = String(j.tag_name || j.name || '').trim();
+    return {
+      ok: true, current, latest, newer: isNewer(latest, current),
+      url: j.html_url || 'https://github.com/Kno2gether-Labs-LTD/cutright/releases',
+      notes: String(j.body || '').slice(0, 1200),
+      publishedAt: j.published_at || null,
+    };
+  } catch (e) {
+    return { ok: false, current,
+             error: e?.name === 'AbortError' ? 'the update check timed out' : String(e?.message || e) };
+  } finally { clearTimeout(timer); }
+}
+
 function registerIpc() {
   ipcMain.handle('config:get', () => ({
     work: settings.work, project: settings.work ? projectPath() : '', engine: settings.engine,
@@ -1361,6 +1429,9 @@ function registerIpc() {
       return { ok: true, credit: entry, total: p.credits.length };
     } catch (e) { return { error: e.message }; }
   });
+
+  ipcMain.handle('app:about', () => buildFacts());
+  ipcMain.handle('app:checkUpdate', () => checkForUpdate());
 
   // Which coding agent does the editing. Everything the app writes is agent-neutral — the brief
   // goes into AGENTS.md as well as CLAUDE.md — so this is a choice, not a port.
@@ -1693,6 +1764,9 @@ function buildMenu() {
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
     { role: 'help', submenu: [
+      { label: 'About Cutright', click: () => win?.webContents.send('about:show') },
+      { label: 'Check for Updates…', click: () => win?.webContents.send('about:show', { check: true }) },
+      { type: 'separator' },
       { label: 'Home', accelerator: 'CmdOrCtrl+Shift+H', click: () => win?.webContents.send('home:show') },
       { label: 'Show Me Around (guided tour)', click: () => win?.webContents.send('tour:show') },
       { label: 'Getting Started Guide', click: () => {

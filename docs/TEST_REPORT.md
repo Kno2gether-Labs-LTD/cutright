@@ -14,9 +14,9 @@ thing you will open in the morning.
 | | |
 |---|---|
 | Automated tests inside the app | **73 run · 72 passed · 1 skipped · 0 failed** |
-| Separate engineering checks | **18 run · 18 passed** (17 via `npm run check:all`, plus the licence guard) |
+| Separate engineering checks | **20 run · 20 passed** (`npm run check:all`) |
 | End-to-end on your real recording | **passed** — rendered, watched, measured |
-| Bugs found while testing | **3**, all fixed (details at the bottom) |
+| Bugs found while testing | **5**, all fixed (details at the bottom) |
 
 The single skipped test needs a real human voice to transcribe. It cannot run without a
 microphone recording, so it is skipped rather than faked.
@@ -76,6 +76,8 @@ build to make sure nothing new broke anything old.
 | **Signing** | The app keeps one identity between updates | Signed two different builds and compared their identity | ✅ |
 | **Recordings on Home** | A take you made shows up as a project, labelled | Opened Home and looked | ✅ |
 | **Choosing the agent** | Use Claude, Codex, Kimi or goose | Listed what is installed and greyed out the rest | ✅ |
+| **About panel** | Say which version you are running, and whether it is genuine | Opened it in the installed app and compared every line against what macOS reports | ✅ |
+| **Check for updates** | Look for a newer release and say so — never install by itself | Asked the real GitHub feed; it correctly says there is no published release yet | ✅ |
 
 ## Part 3 — the real end-to-end test
 
@@ -112,6 +114,20 @@ Adding the Clips and Notes tracks took the timeline to nine, and the panel was a
 no way to scroll — so the last two simply could not be seen. The timeline scrolls now, and starts
 taller.
 
+**4. The About panel said the app was checked by Apple when it was not.**
+macOS reports an unchecked build as `source=Unnotarized Developer ID`, and the code looked for the
+word "notarized" — which is *inside* "Unnotarized". So it reported a build macOS actively rejects
+as approved. About is exactly where someone goes to ask "is this the real thing", so answering
+that wrongly is worse than not answering. Now parsed properly, with a test built from the real
+strings macOS prints.
+
+**5. A warning that could never fire.**
+The recorder is supposed to warn you when a build will lose your Screen Recording permission on
+the next update. It used `require`, which does not exist in this part of the app — and the caller
+caught the error and fell back to "everything is fine". So the warning had never once appeared,
+and nothing said so. Fixed, and there is now a check that fails if any file makes that mistake
+again.
+
 ---
 
 ## What I could not test, and why
@@ -122,6 +138,7 @@ taller.
 | The count-in and controls *during an actual recording* | Same reason. I photographed both states and verified them, but nobody has recorded with them yet |
 | Suggesting cuts with a real AI model | Needs your endpoint and spends credits. The wiring and every safety rule are tested against a stand-in |
 | Windows | The code paths exist; nothing has ever run there |
+| Automatic updates | Deliberately not built yet — the app checks and tells you, it does not install. `docs/UPDATES.md` says what switching it on would involve |
 
 ---
 
@@ -131,7 +148,7 @@ taller.
 cd ~/video-editor-app
 git checkout integration/all
 
-npm test                 # everything: the 17 checks, then the 73 tests in the app
+npm test                 # everything: the 20 checks, then the 73 tests in the app
 npm run check:all        # just the engineering checks
 npm run smoke            # just the tests inside the app
 npm run check:preview    # any single one — see package.json for the list

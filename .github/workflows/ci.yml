@@ -39,6 +39,12 @@ jobs:
         run: node scripts/check-guard.mjs
       - name: Edit ledger (see what changed, take back just that)
         run: node scripts/check-history.mjs
+      - name: Version comparison (whether anyone is told an update exists)
+        run: node scripts/check-version.mjs
+      - name: No require() in an ES module (it throws, and callers swallowed it)
+        run: node scripts/check-esm.mjs
+      - name: Gatekeeper verdict is read correctly ("Unnotarized" is not "Notarized")
+        run: node scripts/check-gatekeeper.mjs
       - name: Media directory (nothing non-commercial offered as safe)
         run: node scripts/check-media-sources.mjs
       - name: Cut planning (a model may suggest, never edit)

@@ -298,6 +298,12 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
     if (panel) {
       await win.webContents.executeJavaScript('hideHome()').catch(() => {});
       await wait(300);
+      // `about` has no toolbar button — it lives in the Help menu and the Home footer — so it is
+      // opened by name rather than by click.
+      if (panel === 'about') {
+        await win.webContents.executeJavaScript('showAbout()').catch(() => {});
+        await wait(1200);
+      }
       const buttons = { transcript: '#btnTranscriptEdit', templates: '#btnTemplates',
                         autocut: '#btnAutoCut', look: '#btnLook', agent: '#btnAgentPick',
                         history: '#btnHistory', media: '#btnMedia' };
