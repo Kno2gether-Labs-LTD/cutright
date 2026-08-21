@@ -16,7 +16,7 @@ thing you will open in the morning.
 | Automated tests inside the app | **73 run · 72 passed · 1 skipped · 0 failed** |
 | Separate engineering checks | **20 run · 20 passed** (`npm run check:all`) |
 | End-to-end on your real recording | **passed** — rendered, watched, measured |
-| Bugs found while testing | **5**, all fixed (details at the bottom) |
+| Bugs found while testing | **8**, all fixed (details at the bottom) |
 
 The single skipped test needs a real human voice to transcribe. It cannot run without a
 microphone recording, so it is skipped rather than faked.
@@ -72,7 +72,9 @@ build to make sure nothing new broke anything old.
 | **Second video track** | Put b-roll or a screen recording over the main video | Rendered it and sampled the actual pixels, in and out of the box | ✅ |
 | **Media directory** | Say where to get footage you are allowed to use | Checked no non-commercial source is ever offered as safe for paid work | ✅ |
 | **Resizable panels** | Drag any panel; it remembers next time | Dragged, released, reset, and used the keyboard | ✅ |
-| **Recording overlay** | Count-in over the screen, floating controls | Photographed both; checked the count-in is click-through | ✅ |
+| **Recording overlay** | Count-in over the screen, floating controls | A real recording driven end to end: Start, count-in, record, stop from the pill | ✅ |
+| Recording produces a file | A take writes a video you can actually open | Checked the file on disk has pictures and a length, not just that it exists | ✅ 2.3 MB, 6s, 2560×1440 |
+| Controls stay out of the shot | The pill must not appear in your recording | Recorded, then pulled a frame from that take and looked at the corner | ✅ not there |
 | **Signing** | The app keeps one identity between updates | Signed two different builds and compared their identity | ✅ |
 | **Recordings on Home** | A take you made shows up as a project, labelled | Opened Home and looked | ✅ |
 | **Choosing the agent** | Use Claude, Codex, Kimi or goose | Listed what is installed and greyed out the rest | ✅ |
@@ -121,7 +123,25 @@ as approved. About is exactly where someone goes to ask "is this the real thing"
 that wrongly is worse than not answering. Now parsed properly, with a test built from the real
 strings macOS prints.
 
-**5. A warning that could never fire.**
+**5. Recording produced nothing at all.** *(you found this one)*
+Both of your attempts wrote a **zero-byte** file. To keep the recorder window out of the shot I
+hid it — and a hidden window stops being drawn, so the browser engine stops handing over the
+recorded data. Four seconds later the app's own "this capture is empty" check decided the
+recording had failed and cancelled it. The recording did not fail; it was hidden to death. The
+window now stays where it is, drawn at zero transparency and marked so macOS refuses to include
+it in any recording.
+
+**6. Two control pills, neither of which worked.**
+Closing the old overlay and opening a new one raced each other: the old one's "I have closed"
+message arrived *after* the new one existed, and cancelled out the app's only handle on it. The
+result was a floating panel nothing could reach — and another one the next time. One panel is now
+reused throughout, and it is destroyed when the recorder closes or the app quits.
+
+**7. The controls appeared in every recording.**
+Confirmed by pulling a frame out of a take and finding the pill in the corner. Both the controls
+and the count-in are now excluded from screen capture, confirmed the same way.
+
+**8. A warning that could never fire.**
 The recorder is supposed to warn you when a build will lose your Screen Recording permission on
 the next update. It used `require`, which does not exist in this part of the app — and the caller
 caught the error and fell back to "everything is fine". So the warning had never once appeared,
@@ -134,8 +154,7 @@ again.
 
 | | Why |
 |---|---|
-| Recording a real screen capture end to end | Needs you to grant Screen Recording to the newly signed app — macOS treats it as a new app because the signature changed |
-| The count-in and controls *during an actual recording* | Same reason. I photographed both states and verified them, but nobody has recorded with them yet |
+| Recording from the **installed** app | Replacing the app dropped its Screen Recording permission. I proved recording works by running the same code from source, where permission is intact — but the copy in your Applications folder needs the permission granted again, and only you can do that |
 | Suggesting cuts with a real AI model | Needs your endpoint and spends credits. The wiring and every safety rule are tested against a stand-in |
 | Windows | The code paths exist; nothing has ever run there |
 | Automatic updates | Deliberately not built yet — the app checks and tells you, it does not install. `docs/UPDATES.md` says what switching it on would involve |

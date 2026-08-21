@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, isAbsolute, sep } from 'node:path';
 import { makeKeyStore } from './keys.mjs';
 import * as mcp from './mcp.mjs';
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync, cpSync, watch, statSync, createReadStream, rmSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { spawn, spawnSync } from 'node:child_process';
 import { writeAgentFiles } from './brief.mjs';
@@ -655,7 +655,27 @@ function registerRecordingIpc() {
     return summary;
   });
 
-  ipcMain.handle('rec:discard', () => { session = null; return { ok: true }; });
+  // Throwing a take away should throw the FOLDER away too. A capture that produced nothing left
+  // a directory containing a zero-byte screen.mp4 behind — two of those are sitting in the
+  // Movies folder right now from a failed attempt, and they are worse than useless: they look
+  // like recordings.
+  ipcMain.handle('rec:discard', () => {
+    const dir = session?.dir;
+    session = null;
+    try {
+      if (dir && existsSync(dir)) {
+        // Only if there is genuinely nothing worth keeping. Never delete a take that has bytes.
+        const rec = join(dir, 'recording');
+        const sizes = existsSync(rec)
+          ? readdirSync(rec).map((f) => { try { return statSync(join(rec, f)).size; } catch { return 0; } })
+          : [];
+        const salvage = sizes.reduce((a, b) => a + b, 0);
+        if (salvage < 8192) { rmSync(dir, { recursive: true, force: true }); return { ok: true, removed: dir }; }
+        return { ok: true, kept: dir, bytes: salvage };
+      }
+    } catch (e) { log('discard', e.message); }
+    return { ok: true };
+  });
 
   // The recording becomes a project: same pipeline as "Start from a video", plus the
   // provenance and the zoom suggestions derived from the cursor track.
@@ -1768,6 +1788,13 @@ app.whenReady().then(async () => {
     process.env.CVE_SMOKE = argSmoke.split('=')[1];
     const argOut = process.argv.find((a) => a.startsWith('--cve-out='));
     if (argOut) process.env.CVE_SMOKE_OUT = argOut.split('=')[1];
+    // Launched with `open -a`, so macOS attributes screen capture to Cutright rather than to
+    // whichever terminal started it. Environment variables do not survive that, so the flags
+    // that matter have argument forms too.
+    if (process.argv.some((a) => a === '--cve-record')) process.env.CVE_SMOKE_RECORD = '1';
+    if (process.argv.some((a) => a === '--cve-overlay')) process.env.CVE_SMOKE_OVERLAY = '1';
+    const argWork = process.argv.find((a) => a.startsWith('--cve-work='));
+    if (argWork) { process.env.WORK = argWork.split('=')[1]; settings.work = process.env.WORK; }
   }
   if (process.env.CVE_E2E) (await import(process.env.CVE_E2E)).run({ win, app, settings, logToApp: (l) => log(l) });
   else if (process.env.CVE_SMOKE) (await import('./smoke.mjs')).run({ win, app, settings, logToApp: (l) => log(l),

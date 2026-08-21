@@ -305,7 +305,14 @@ export async function run({ win, app, settings, logToApp = () => {}, overlay = n
         // Stop the way the pill does: through main, not by calling the page directly.
         const { ipcMain: _im } = await import('electron');
         rw.webContents.send('rec:remote', 'stop');
-        await wait(6000);
+        // Finalising writes the file, probes it and builds the review step. Six seconds was
+        // enough on an idle machine and not on a busy one, which is the kind of margin that
+        // turns a passing test into a flaky one.
+        for (let i = 0; i < 20; i++) {
+          const done = await evalRec(`!document.querySelector('#review')?.hidden && document.querySelector('#bar')?.hidden`);
+          if (done === true) break;
+          await wait(1000);
+        }
         const after = await evalRec(`({ bar: !document.querySelector('#bar')?.hidden,
                                         review: !document.querySelector('#review')?.hidden,
                                         captured: (window.__recDebug?.captured ?? null) })`);
