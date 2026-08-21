@@ -1,0 +1,141 @@
+# What I tested, and what happened
+
+**Build tested:** `integration/all`, built and installed to `/Applications/Cutright.app`, signed by
+*Developer ID Application: KNO2GETHER LABS LTD* and notarised through CI.
+**Date:** 21 August 2026.
+
+Everything below was run against the **installed app**, not just the source — so this is the same
+thing you will open in the morning.
+
+---
+
+## The short version
+
+| | |
+|---|---|
+| Automated tests inside the app | **73 run · 72 passed · 1 skipped · 0 failed** |
+| Separate engineering checks | **18 run · 18 passed** (17 via `npm run check:all`, plus the licence guard) |
+| End-to-end on your real recording | **passed** — rendered, watched, measured |
+| Bugs found while testing | **3**, all fixed (details at the bottom) |
+
+The single skipped test needs a real human voice to transcribe. It cannot run without a
+microphone recording, so it is skipped rather than faked.
+
+---
+
+## Part 1 — everything that already worked, re-checked
+
+These are the features that existed before this week's work. I re-ran all of them on the new
+build to make sure nothing new broke anything old.
+
+| What it is | What it should do | Result |
+|---|---|---|
+| Opening a project | Pick a folder, land in the editor with the video loaded | ✅ |
+| Home screen | Show recent projects, the feature list, and the brand panel | ✅ |
+| Timeline | Every track lines up with its label, nothing is cut off, zoom and Fit work | ✅ |
+| Playback | Play, pause, step a frame, jump to start and end | ✅ |
+| Captions | Edit the words, highlight a word, change height, size and colour | ✅ |
+| Caption defaults | Change them for the whole video at once | ✅ |
+| Transcript editing | Delete a sentence in the text and the video cuts itself | ✅ |
+| Auto-cut | Find dead air and filler words; every proposal is genuinely silent | ✅ |
+| Cuts | Add one, drag it, delete it; the edit survives a save and reload | ✅ |
+| Transitions | A cut can carry a fade, and it survives to the file | ✅ |
+| Scenes / panels | Add one, edit it, see it on the track | ✅ |
+| Overlays | Bring in a motion-graphics clip with transparency | ✅ |
+| Templates | Both packs load with previews; applying one restyles captions, not content | ✅ |
+| Zooms | Add a push-in; the centre is stored as a fraction, not pixels | ✅ |
+| Zoom suggestions | Suggestions from a recording become real zooms when accepted | ✅ |
+| Framing | Move the picture to a corner, to the side, back to full | ✅ |
+| Recording | Sources listed, permissions reported, chunks written, pause stops the clock | ✅ |
+| Transcription | Engines detected; API keys stored in the keychain and never shown again | ✅ |
+| Prepare | One button transcribes, cuts, decides framing and applies the pack | ✅ |
+| Check | Finds things a render would silently drop | ✅ |
+| Sound | An ElevenLabs key wires the agent's sound tools without writing the key anywhere | ✅ |
+| Agent hand-off | The brief reaches the agent; picking a template rewrites it | ✅ |
+| Security | The app cannot read files outside your project; the page has no system access | ✅ |
+| Onboarding | The tour, the guide and the environment check | ✅ |
+| Switching projects | Opening another project actually reloads onto it | ✅ |
+
+## Part 2 — everything added since
+
+| What it is | What it should do | How I checked it | Result |
+|---|---|---|---|
+| **Live preview** | The player shows the edit, not the raw footage | Rendered a preview and compared it frame by frame against a full export | ✅ |
+| Cuts while playing | Skip a cut instantly, without waiting for a render | Put the playhead inside a cut and watched where it landed | ✅ |
+| Preview speed | Not rebuild everything each time | Two preview windows on your real recording: 27s then **11s** | ✅ |
+| **Smarter cuts** | A model reads the transcript and suggests cuts | Ran it against a fake model — including a deliberately invented answer | ✅ |
+| Cut safety | Never cut mid-word; never delete more than half a passage | Fed it bad answers on purpose and checked each was refused | ✅ |
+| **Caption multi-select** | Select a run of captions and move them together | Shift-clicked three, pressed the arrow keys, checked the file | ✅ |
+| **Protecting your edits** | The agent cannot quietly lose something you did by hand | Made an edit, let the "agent" delete it, checked it was caught and restored | ✅ |
+| **Edit history** | See every change and take back just one | Made a two-part change, took back one half, confirmed the other survived | ✅ |
+| **Timestamped notes** | Leave a note at a moment for the agent | Pressed N while playing; the note landed at the playhead and saved | ✅ |
+| **Second video track** | Put b-roll or a screen recording over the main video | Rendered it and sampled the actual pixels, in and out of the box | ✅ |
+| **Media directory** | Say where to get footage you are allowed to use | Checked no non-commercial source is ever offered as safe for paid work | ✅ |
+| **Resizable panels** | Drag any panel; it remembers next time | Dragged, released, reset, and used the keyboard | ✅ |
+| **Recording overlay** | Count-in over the screen, floating controls | Photographed both; checked the count-in is click-through | ✅ |
+| **Signing** | The app keeps one identity between updates | Signed two different builds and compared their identity | ✅ |
+| **Recordings on Home** | A take you made shows up as a project, labelled | Opened Home and looked | ✅ |
+| **Choosing the agent** | Use Claude, Codex, Kimi or goose | Listed what is installed and greyed out the rest | ✅ |
+
+## Part 3 — the real end-to-end test
+
+Not a synthetic fixture: a copy of **your own 78-second recording** from 19 August, with camera
+and screen. I added everything a real edit would carry, then rendered it and looked at the result.
+
+| Step | Result |
+|---|---|
+| Added a cut, a zoom, a picture-in-picture clip, two framing moves, a note, a hand-edited caption | ✅ |
+| Ran Check | 0 errors, 1 warning — correctly telling me a note was still open |
+| Previewed 45–65s | 27 seconds |
+| Previewed a second window | **11 seconds** (it reused the expensive part) |
+| Full export | 63 seconds, **74.5s long** — exactly right after the two cuts |
+| Layered export | Picture, captions with transparency, and the voice as separate files |
+| Looked at four frames | Camera as a corner circle ✅ · back to full ✅ · the zoom ✅ · the picture-in-picture ✅ |
+| Measured the sound | −14.6 LUFS against a −14 target ✅ *(this one failed first — see below)* |
+
+---
+
+## What broke while I was testing, and what I did
+
+**1. Sound was too quiet on any video without music.**
+Your export came out at −17.6 LUFS when the project asked for −14 — quiet enough to notice next
+to other videos. Loudness levelling was only applied when a video had music or sound effects, so
+a plain talking-head export was never levelled at all. It now always is. *Added a test that
+measures a music-free export against its target.*
+
+**2. Previewing a section that does not exist silently produced a file with sound and no picture.**
+Asking for seconds 195–203 of an eight-second video "succeeded" and gave you a black screen with
+audio. It now says so plainly, and a range that merely runs off the end is trimmed instead.
+
+**3. Two tracks were unreachable.**
+Adding the Clips and Notes tracks took the timeline to nine, and the panel was a fixed height with
+no way to scroll — so the last two simply could not be seen. The timeline scrolls now, and starts
+taller.
+
+---
+
+## What I could not test, and why
+
+| | Why |
+|---|---|
+| Recording a real screen capture end to end | Needs you to grant Screen Recording to the newly signed app — macOS treats it as a new app because the signature changed |
+| The count-in and controls *during an actual recording* | Same reason. I photographed both states and verified them, but nobody has recorded with them yet |
+| Suggesting cuts with a real AI model | Needs your endpoint and spends credits. The wiring and every safety rule are tested against a stand-in |
+| Windows | The code paths exist; nothing has ever run there |
+
+---
+
+## If you want to run it yourself
+
+```bash
+cd ~/video-editor-app
+git checkout integration/all
+
+npm test                 # everything: the 17 checks, then the 73 tests in the app
+npm run check:all        # just the engineering checks
+npm run smoke            # just the tests inside the app
+npm run check:preview    # any single one — see package.json for the list
+```
+
+The app itself is already installed. **Grant Screen Recording once** before recording — Privacy &
+Security → Screen Recording → Cutright. It will not ask again after that.
