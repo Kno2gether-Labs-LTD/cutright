@@ -34,3 +34,6 @@ echo
 echo "--- verification ---"
 codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier|flags" || true
 spctl -a -vvv "$APP" 2>&1 | head -3 || true
+
+# The build output must not linger as a second copy of the app.
+node scripts/unregister-build.mjs
