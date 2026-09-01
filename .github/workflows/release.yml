@@ -110,7 +110,7 @@ jobs:
       # same name on a re-run, quietly turning a signed release into an unsigned one.
       - name: Attach the build to the release
         if: steps.signing.outputs.signed == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # On a tag push ref_name IS the tag; on a manual run it is "main", which the action
           # cannot attach to — it asked GitHub for "the release for tag refs/heads/main" and got
